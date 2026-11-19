@@ -56,7 +56,8 @@ queue) or Leaguepedia data, shown as a separate "current meta" badge.
 
 The GRID esports dataset (`stl-hackathon-2026-grid-starter`) is licensed for
 the hackathon only and is **never committed** to this repo. Clone it
-locally and point the project at it via `STL_DATA_DIR` (default:
+locally and point the project at it via `STL_DATA_DIR` (default: first
+`./stl-hackathon-2026-grid-starter`, then the sibling
 `../stl-hackathon-2026-grid-starter`). `.gitignore` excludes the data
 directory, `*.zst`/`*.jsonl` files, and derived artifacts
 (`*.parquet`, `*.sqlite`, `*.duckdb`). Before every commit, check the
