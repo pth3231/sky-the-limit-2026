@@ -59,8 +59,10 @@ smallest change, then rerun the test and relevant suite.
      synergy, team/champion history, and recent-patch blending.
    - Sort patch versions numerically (`15.10` newer than `15.9`); blend patches until the configured
      minimum-games threshold is met. Exclude unfinished games or games without a winner from win
-     statistics. Blank patch values (2 rows in the real index) go to an `unknown` bucket that
-     sorts older than every numeric patch, so it is only blended in as a last resort.
+     statistics, including their denominators (`decided_games`, `decided_picks`, side and pair
+     game counts); pick/ban presence still counts every game. Blank or non-numeric patch values
+     (2 blank rows in the real index) go to an `unknown` bucket that sorts older than every
+     numeric patch, so it is only blended in as a last resort.
 6. **Build command**
    - Test an end-to-end synthetic data directory and verify both output files are written.
    - Implement `python -m app.pipeline.build [--out]`, serializing per-game drafts and aggregates.

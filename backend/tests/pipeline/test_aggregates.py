@@ -1,5 +1,7 @@
 from typing import Literal
 
+import pytest
+
 from app.pipeline.aggregates import blend_recent, compute_aggregates
 from app.pipeline.dataset import GameDraft
 from app.pipeline.drafts import DraftAction
@@ -88,12 +90,13 @@ def test_computes_champion_side_synergy_and_team_history_counts() -> None:
     champions = {item.champion_id: item for item in patch.champions}
     assert patch.game_count == 3
     assert champions["A"].games == 2
+    assert champions["A"].decided_games == 1
     assert champions["A"].picks == 2
     assert champions["A"].bans == 1
     assert champions["A"].wins == 1
-    assert patch.sides.blue_games == 3
+    assert patch.sides.blue_games == 1
     assert patch.sides.blue_wins == 1
-    assert patch.sides.red_games == 3
+    assert patch.sides.red_games == 1
     assert patch.sides.red_wins == 0
     assert patch.synergies[0].champion_a_id == "A"
     assert patch.synergies[0].champion_b_id == "B"
@@ -104,8 +107,75 @@ def test_computes_champion_side_synergy_and_team_history_counts() -> None:
         item for item in patch.team_champions if item.team_id == "blue" and item.champion_id == "A"
     )
     assert team_a.picks == 1
+    assert team_a.decided_picks == 1
     assert team_a.wins == 1
     assert team_a.banned_against == 1
+
+    red_a = next(
+        item for item in patch.team_champions if item.team_id == "red" and item.champion_id == "A"
+    )
+    assert red_a.picks == 1
+    assert red_a.decided_picks == 0
+
+
+def test_undecided_games_are_excluded_from_win_rate_denominators() -> None:
+    games = [
+        _game("decided", "15.10", "red", [_action(1, "pick", "blue", "A")]),
+        _game(
+            "unfinished",
+            "15.10",
+            "blue",
+            [_action(1, "pick", "blue", "A"), _action(2, "pick", "blue", "B")],
+            finished=False,
+        ),
+        _game("no-winner", "15.10", None, [_action(1, "pick", "red", "A")]),
+    ]
+
+    patch = compute_aggregates(games)["15.10"]
+    champion_a = next(item for item in patch.champions if item.champion_id == "A")
+
+    assert patch.game_count == 3
+    assert patch.sides.blue_games == 1
+    assert patch.sides.red_games == 1
+    assert patch.sides.red_wins == 1
+    assert champion_a.picks == 3
+    assert champion_a.decided_games == 1
+    assert champion_a.wins == 0
+    assert patch.synergies == []
+
+
+def test_blue_ban_is_recorded_against_red_team() -> None:
+    game = _game("game-1", "15.10", "blue", [_action(1, "ban", "blue", "Z")])
+
+    patch = compute_aggregates([game])["15.10"]
+    history = {(item.team_id, item.champion_id): item for item in patch.team_champions}
+
+    assert history[("blue", "Z")].bans == 1
+    assert history[("blue", "Z")].banned_against == 0
+    assert history[("red", "Z")].banned_against == 1
+
+
+def test_action_from_team_outside_the_game_is_rejected() -> None:
+    game = _game("game-1", "15.10", "blue", [_action(1, "pick", "stranger", "A")])
+
+    with pytest.raises(ValueError, match="unknown team"):
+        compute_aggregates([game])
+
+
+def test_non_numeric_patch_is_labeled_unknown() -> None:
+    odd_game = _game("odd-patch", "V15.1b", "blue", [])
+    versioned_game = _game("versioned-patch", "15.9", "blue", [])
+
+    aggregates = compute_aggregates([odd_game, versioned_game])
+    blended = blend_recent({"V15.1b": [odd_game], "15.9": [versioned_game]}, min_games=2)
+
+    assert list(aggregates) == ["unknown", "15.9"]
+    assert [game.game_id for game in blended] == ["versioned-patch", "odd-patch"]
+
+
+def test_blend_recent_rejects_non_positive_minimum() -> None:
+    with pytest.raises(ValueError, match="min_games"):
+        blend_recent({}, min_games=0)
 
 
 def test_blends_newest_numeric_patch_versions_until_minimum_games() -> None:

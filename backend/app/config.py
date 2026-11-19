@@ -53,4 +53,5 @@ class Settings(BaseSettings):
     @field_validator("data_dir")
     @classmethod
     def data_dir_contains_meta(cls, value: Path) -> Path:
+        """Resolve the configured directory and require its `meta/` index."""
         return _require_meta(value)
