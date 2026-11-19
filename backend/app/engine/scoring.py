@@ -9,10 +9,11 @@ with slope 1.2: about ``0.5 + 0.3 * gap`` near an even game, and rarely beyond 1
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from functools import cache
 from itertools import combinations
 from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from app.engine.fearless import wins_needed
 from app.engine.models import Candidate, ContributingFactor, SeriesFormat, Side, Signal
@@ -88,8 +89,13 @@ def _logistic(edge: float) -> float:
     return 1 / (1 + math.exp(-LOGISTIC_SLOPE * edge))
 
 
-@dataclass(frozen=True, slots=True)
-class _Edge:
+def _edge_impact(edge: float) -> float:
+    """Approximate a strength edge as a win-probability change from an even baseline."""
+    return _logistic(edge) - PRIOR_RATE
+
+
+class _Edge(BaseModel):
+    model_config = ConfigDict(frozen=True)
     kind: _EdgeKind
     champion_id: str
     edge: float
@@ -131,7 +137,7 @@ class Scorer:
         record = self._stats.champion(champion_id)
         wins, games = (record.wins, record.decided_games) if record else (0, 0)
         edge = _clamp(self._champion_rate(champion_id) - PRIOR_RATE, META_CAP)
-        return _Edge("meta", champion_id, edge, wins, games)
+        return _Edge(kind="meta", champion_id=champion_id, edge=edge, wins=wins, games=games)
 
     def _comfort_edge(self, team_id: str, champion_id: str) -> _Edge | None:
         record = self._stats.team_champion(team_id, champion_id)
@@ -140,7 +146,13 @@ class Scorer:
         champion_rate = self._champion_rate(champion_id)
         team_rate = smoothed_rate(record.wins, record.decided_picks, prior=champion_rate)
         edge = _clamp(team_rate - champion_rate, COMFORT_CAP)
-        return _Edge("comfort", champion_id, edge, record.wins, record.decided_picks)
+        return _Edge(
+            kind="comfort",
+            champion_id=champion_id,
+            edge=edge,
+            wins=record.wins,
+            games=record.decided_picks,
+        )
 
     def _synergy_edge(self, champion_id: str, partner_id: str) -> _Edge | None:
         record = self._stats.pair(champion_id, partner_id)
@@ -150,7 +162,14 @@ class Scorer:
         edge = _clamp(
             smoothed_rate(record.wins, record.games, prior=expected) - expected, SYNERGY_CAP
         )
-        return _Edge("synergy", champion_id, edge, record.wins, record.games, partner_id)
+        return _Edge(
+            kind="synergy",
+            champion_id=champion_id,
+            edge=edge,
+            wins=record.wins,
+            games=record.games,
+            partner_id=partner_id,
+        )
 
     def _candidate_edges(
         self,
@@ -249,10 +268,17 @@ class Scorer:
         """Score picking ``champion_id`` for us next."""
         probability = self.game_win_probability([*our_picks, champion_id], opponent_picks)
         edges = self._candidate_edges(self._our_team_id, champion_id, our_picks)
-        factors = self._ordered([self._factor(edge, "candidate", edge.edge) for edge in edges])
-        headline = f"Raises your estimated game win chance to {round(100 * probability)}%"
-        if probability < self.game_win_probability(our_picks, opponent_picks):
-            headline = f"Leaves your estimated game win chance at {round(100 * probability)}%"
+        factors = self._ordered(
+            [self._factor(edge, "candidate", _edge_impact(edge.edge)) for edge in edges]
+        )
+        current = self.game_win_probability(our_picks, opponent_picks)
+        percent = round(100 * probability)
+        if probability > current:
+            headline = f"Raises your estimated game win chance to {percent}%"
+        elif probability < current:
+            headline = f"Lowers your estimated game win chance to {percent}%"
+        else:
+            headline = f"Keeps your estimated game win chance unchanged at {percent}%"
         return Candidate(
             champion_id=champion_id,
             champion_name=self._name(champion_id),
@@ -281,7 +307,7 @@ class Scorer:
         score = current + threat * weight
 
         edges = self._candidate_edges(self._opponent_team_id, champion_id, opponent_picks)
-        factors = [self._factor(edge, "candidate", edge.edge) for edge in edges]
+        factors = [self._factor(edge, "candidate", _edge_impact(edge.edge)) for edge in edges]
         for index, edge in enumerate(edges):
             if edge.kind == "comfort":
                 label = f"{self._opponent_team_name} won {edge.wins} of {edge.games} games with it"
@@ -324,20 +350,24 @@ class Scorer:
         """Explain the current game estimate: side, our picks, and the opponent's picks."""
         side_edge, side_wins, side_games = self._side_edge()
         side_label = (
-            f"{self._our_side.capitalize()} side won {_percent(side_wins, side_games)}% "
+            "No decided pro games on these patches"
+            if side_games == 0
+            else f"{self._our_side.capitalize()} side won {_percent(side_wins, side_games)}% "
             f"of recent pro games ({side_games} games)"
         )
         factors = [
             ContributingFactor(
-                label=side_label, impact=round(side_edge, 3), signal=signal_for(side_games)
+                label=side_label,
+                impact=round(_edge_impact(side_edge), 3),
+                signal=signal_for(side_games),
             )
         ]
         factors.extend(
-            self._factor(edge, "ours", edge.edge)
+            self._factor(edge, "ours", _edge_impact(edge.edge))
             for edge in self._team_edges(self._our_team_id, our_picks)
         )
         factors.extend(
-            self._factor(edge, "theirs", -edge.edge)
+            self._factor(edge, "theirs", -_edge_impact(edge.edge))
             for edge in self._team_edges(self._opponent_team_id, opponent_picks)
         )
         return self._ordered(factors)

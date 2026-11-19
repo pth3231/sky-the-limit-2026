@@ -1,7 +1,8 @@
 """Blend recent patch aggregates into summed lookups for scoring."""
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+
+from pydantic import BaseModel, ConfigDict
 
 from app.engine.errors import UnknownPatchError
 from app.engine.models import Side
@@ -15,11 +16,13 @@ from app.pipeline.aggregates import (
 )
 
 DEFAULT_MIN_GAMES = 60
+MIN_SUBJECT_GAMES = 10
 
 
-@dataclass(frozen=True, slots=True)
-class BlendedStats:
+class BlendedStats(BaseModel):
     """Counts summed over the patches selected for a recommendation."""
+
+    model_config = ConfigDict(frozen=True)
 
     patches: tuple[str, ...]
     game_count: int
@@ -27,9 +30,11 @@ class BlendedStats:
     red_wins: int
     decided_games: int
     champions: Mapping[str, ChampionAggregate]
+    champion_patch_map: Mapping[str, tuple[str, ...]]
     pairs: Mapping[tuple[str, str], ChampionPairAggregate]
     team_champions: Mapping[tuple[str, str], TeamChampionAggregate]
     teams: Mapping[str, TeamAggregate]
+    team_patch_map: Mapping[str, tuple[str, ...]]
 
     def champion(self, champion_id: str) -> ChampionAggregate | None:
         """Return summed counts for a champion, or ``None`` without data."""
@@ -53,16 +58,26 @@ class BlendedStats:
         record = self.teams.get(team_id)
         return record.games if record else 0
 
+    def team_patches(self, team_id: str) -> tuple[str, ...]:
+        """Return the recent-first patches used for this team's history."""
+        return self.team_patch_map.get(team_id, ())
+
+    def all_patches(self) -> tuple[str, ...]:
+        """Return every patch contributing to global or subject-specific recommendation data."""
+        patches = set(self.patches)
+        patches.update(label for labels in self.champion_patch_map.values() for label in labels)
+        patches.update(label for labels in self.team_patch_map.values() for label in labels)
+        return tuple(sorted(patches, key=patch_sort_key, reverse=True))
+
     def side_record(self, side: Side) -> tuple[int, int]:
         """Return ``(wins, decided games)`` for a side."""
         wins = self.blue_wins if side == "blue" else self.red_wins
         return wins, self.decided_games
 
 
-def _select_patches(
+def _eligible_patches(
     aggregates: Mapping[str, PatchAggregate],
     patch: str | None,
-    min_games: int,
 ) -> list[PatchAggregate]:
     if not aggregates:
         raise UnknownPatchError("No patch aggregates are available; build the derived data first")
@@ -74,11 +89,20 @@ def _select_patches(
     else:
         raise UnknownPatchError(f"No data for patch {patch}")
 
+    return [aggregates[label] for label in ordered[start:]]
+
+
+def _select_patches(
+    aggregates: Mapping[str, PatchAggregate],
+    patch: str | None,
+    min_games: int,
+) -> list[PatchAggregate]:
+    eligible = _eligible_patches(aggregates, patch)
     selected: list[PatchAggregate] = []
     total = 0
-    for label in ordered[start:]:
-        selected.append(aggregates[label])
-        total += aggregates[label].game_count
+    for aggregate in eligible:
+        selected.append(aggregate)
+        total += aggregate.game_count
         if total >= min_games:
             break
     return selected
@@ -164,6 +188,59 @@ def _sum_teams(patches: Iterable[PatchAggregate]) -> dict[str, TeamAggregate]:
     return summed
 
 
+def _sum_subject_champions(
+    patches: list[PatchAggregate],
+) -> tuple[dict[str, ChampionAggregate], dict[str, tuple[str, ...]]]:
+    champion_ids = {item.champion_id for patch in patches for item in patch.champions}
+    summed: dict[str, ChampionAggregate] = {}
+    champion_patch_map: dict[str, tuple[str, ...]] = {}
+    for champion_id in champion_ids:
+        subject_patches: list[PatchAggregate] = []
+        games = 0
+        for patch in patches:
+            record = next(
+                (item for item in patch.champions if item.champion_id == champion_id), None
+            )
+            if record is None:
+                continue
+            subject_patches.append(patch)
+            games += record.decided_games
+            if games >= MIN_SUBJECT_GAMES:
+                break
+        summed[champion_id] = _sum_champions(subject_patches)[champion_id]
+        champion_patch_map[champion_id] = tuple(patch.patch for patch in subject_patches)
+    return summed, champion_patch_map
+
+
+def _sum_subject_teams(
+    patches: list[PatchAggregate],
+) -> tuple[
+    dict[str, TeamAggregate],
+    dict[tuple[str, str], TeamChampionAggregate],
+    dict[str, tuple[str, ...]],
+]:
+    team_ids = {item.team_id for patch in patches for item in patch.teams}
+    teams: dict[str, TeamAggregate] = {}
+    team_champions: dict[tuple[str, str], TeamChampionAggregate] = {}
+    team_patch_map: dict[str, tuple[str, ...]] = {}
+    for team_id in team_ids:
+        subject_patches: list[PatchAggregate] = []
+        games = 0
+        for patch in patches:
+            record = next((item for item in patch.teams if item.team_id == team_id), None)
+            if record is None:
+                continue
+            subject_patches.append(patch)
+            games += record.games
+            if games >= MIN_SUBJECT_GAMES:
+                break
+        team_patch_map[team_id] = tuple(patch.patch for patch in subject_patches)
+        teams.update({team_id: _sum_teams(subject_patches)[team_id]} if subject_patches else {})
+        records = _sum_team_champions(subject_patches)
+        team_champions.update({key: value for key, value in records.items() if key[0] == team_id})
+    return teams, team_champions, team_patch_map
+
+
 def blend_patches(
     aggregates: Mapping[str, PatchAggregate],
     patch: str | None = None,
@@ -174,15 +251,20 @@ def blend_patches(
     Patches newer than the requested one are never used. Raises ``UnknownPatchError`` when the
     requested patch has no aggregates.
     """
+    eligible = _eligible_patches(aggregates, patch)
     selected = _select_patches(aggregates, patch, min_games)
+    champions, champion_patch_map = _sum_subject_champions(eligible)
+    teams, team_champions, team_patch_map = _sum_subject_teams(eligible)
     return BlendedStats(
         patches=tuple(item.patch for item in selected),
         game_count=sum(item.game_count for item in selected),
         blue_wins=sum(item.sides.blue_wins for item in selected),
         red_wins=sum(item.sides.red_wins for item in selected),
         decided_games=sum(item.sides.blue_games for item in selected),
-        champions=_sum_champions(selected),
+        champions=champions,
+        champion_patch_map=champion_patch_map,
         pairs=_sum_pairs(selected),
-        team_champions=_sum_team_champions(selected),
-        teams=_sum_teams(selected),
+        team_champions=team_champions,
+        teams=teams,
+        team_patch_map=team_patch_map,
     )

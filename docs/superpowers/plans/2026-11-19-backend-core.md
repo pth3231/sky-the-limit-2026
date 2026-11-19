@@ -20,9 +20,12 @@ GA + NN of step 3, and stays as the "contributing factors" explanation layer aft
   R B R B, picks R B B R. Each side gets 5 bans and 5 picks.
 - **Fearless.** A champion picked by either team in an earlier game of the series is unavailable
   for the rest of the series, for picks and bans alike. Bans do not carry over.
-- **Patch blending.** Start from the requested patch (default: newest). Add older patches, newest
-  first, until at least 60 games are covered. Newer patches than the requested one are never
-  used. An unknown patch is a 422.
+- **Patch blending.** Global side and pair statistics start from the requested patch (default:
+  newest) and add older patches, newest first, until at least 60 games are covered. Champion
+  records and each team's history use subject-specific windows, extending through eligible older
+  patches until the subject has 10 decided games (or the data runs out). `patchesUsed` reports the
+  union of global and subject-specific source patches. Newer patches than the requested one are
+  never used. An unknown patch is a 422.
 - **Scoring.** Smoothed rates with a 50% prior (pseudo-count 10) so small samples stay near
   even. A team's strength is the sum of per-champion meta edges (capped ±10 points), team comfort
   edges (team win rate with the champion minus its overall win rate, capped ±5) and same-team
@@ -40,6 +43,10 @@ GA + NN of step 3, and stays as the "contributing factors" explanation layer aft
   games), some (10+) or limited. No ML terms.
 - **Our team.** `CLOUD9_TEAM_ID` if set; otherwise the LoL team whose name starts with "Cloud9".
 - **Wire format.** camelCase JSON through a Pydantic alias generator; snake_case in Python.
+- **Validation details.** Draft-rule errors use the standard FastAPI 422 `detail` list shape, with
+  a `loc`, `msg`, and `type` for generated OpenAPI clients.
+- **Factor units.** Explanatory factor impacts approximate win-probability changes from an even
+  baseline, so factors can be compared and ordered consistently.
 
 ## Scope and touch points
 
@@ -66,17 +73,17 @@ Out of scope: NN/GA (step 3), frontend (step 4), deployment.
 
 1. **Draft order** — 20 slots; 5 bans and 5 picks per side; exact sequence; red-side ownership.
 2. **Fearless and validation** — pool shrinks game 1 → 2 → 3; bans don't carry over; rejects
-   excluded, duplicate or unknown champions, shared picks across games, more than 5 picks per
-   side, more than 20 actions, and a series that is already decided.
+   excluded, duplicate or unknown champions, shared picks across games, incomplete or overfull
+   completed games, more than 20 actions, and a series that is already decided.
 3. **Patch blending** — numeric order (`16.10` newer than `16.9`); stops at the threshold; an
    older requested patch excludes newer ones; counts are summed; unknown patch raises.
 4. **Scoring** — a strong champion outranks a weak one; the synergy factor names the teammate;
    limited-data qualifier; factors ordered by impact; series math (Bo1 = p; Bo3 at 1–0 with
    p = 0.5 → 0.75).
-5. **Service** — recommendation and alternatives are never picked, banned or excluded; the
-   opponent's slot returns tendencies and no recommendation; a complete draft still reports win
-   rates; unknown opponent raises.
-6. **API** — camelCase in and out; 422 on illegal state; list endpoints.
+5. **Service** — recommendation and alternatives are never picked, banned or excluded; self-play
+   is rejected; thin opponent samples are noted; the opponent's slot returns tendencies and no
+   recommendation; a complete draft still reports win rates; unknown opponent raises.
+6. **API** — camelCase in and out; consistent list-shaped 422 details; list endpoints.
 7. **Smoke** — run the engine on the real local aggregates and check shape and legality only.
    Nothing from the data is printed into docs or committed.
 

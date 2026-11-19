@@ -21,8 +21,8 @@ class CamelModel(BaseModel):
 class PreviousGame(CamelModel):
     """Picks and result of an earlier game in the series, from our point of view."""
 
-    our_picks: list[str] = Field(default_factory=list)
-    opponent_picks: list[str] = Field(default_factory=list)
+    our_picks: list[str]
+    opponent_picks: list[str]
     result: Literal["win", "loss"]
 
 
@@ -47,7 +47,7 @@ class Slot(CamelModel):
 
 
 class ContributingFactor(CamelModel):
-    """One plain-language reason behind a score; ``impact`` is in win-probability points."""
+    """One plain-language reason; ``impact`` approximates its change in win probability."""
 
     label: str
     impact: float

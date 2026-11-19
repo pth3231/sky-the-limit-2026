@@ -8,10 +8,9 @@ games only, so unfinished games never deflate a win rate.
 import re
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 from itertools import combinations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.pipeline.dataset import GameDraft
 
@@ -96,24 +95,21 @@ class PatchAggregate(BaseModel):
     teams: list[TeamAggregate]
 
 
-@dataclass(slots=True)
-class _ChampionCounts:
+class _ChampionCounts(BaseModel):
     champion_name: str
-    game_ids: set[str] = field(default_factory=set)
-    decided_game_ids: set[str] = field(default_factory=set)
+    game_ids: set[str] = Field(default_factory=set)
+    decided_game_ids: set[str] = Field(default_factory=set)
     picks: int = 0
     bans: int = 0
     wins: int = 0
 
 
-@dataclass(slots=True)
-class _PairCounts:
+class _PairCounts(BaseModel):
     games: int = 0
     wins: int = 0
 
 
-@dataclass(slots=True)
-class _TeamChampionCounts:
+class _TeamChampionCounts(BaseModel):
     picks: int = 0
     decided_picks: int = 0
     wins: int = 0
@@ -121,8 +117,7 @@ class _TeamChampionCounts:
     banned_against: int = 0
 
 
-@dataclass(slots=True)
-class _TeamCounts:
+class _TeamCounts(BaseModel):
     games: int = 0
     decided_games: int = 0
     wins: int = 0

@@ -18,7 +18,7 @@ from app.engine.models import (
     TeamSummary,
 )
 from app.engine.scoring import Scorer, series_win_probability
-from app.engine.stats import DEFAULT_MIN_GAMES, BlendedStats, blend_patches
+from app.engine.stats import DEFAULT_MIN_GAMES, MIN_SUBJECT_GAMES, BlendedStats, blend_patches
 from app.pipeline.aggregates import PatchAggregate, patch_sort_key
 from app.pipeline.meta import Champion, Team, load_champions, load_teams
 
@@ -55,6 +55,7 @@ class DraftEngine:
         self._teams = dict(teams)
         self._our_team_id = our_team_id
         self._min_games = min_games
+        self._stats_cache: dict[str | None, BlendedStats] = {}
         names = {champion_id: champion.name for champion_id, champion in champions.items()}
         for patch in self._aggregates.values():
             for item in patch.champions:
@@ -93,8 +94,13 @@ class DraftEngine:
         opponent = self._teams.get(request.opponent_team_id)
         if opponent is None:
             raise DraftStateError(f"Unknown opponent team: {request.opponent_team_id}")
+        if opponent.team_id == self._our_team_id:
+            raise DraftStateError("Your team cannot play itself as the opponent")
         context = build_context(request, self._champion_names)
-        stats = blend_patches(self._aggregates, request.patch, self._min_games)
+        stats = self._stats_cache.get(request.patch)
+        if stats is None:
+            stats = blend_patches(self._aggregates, request.patch, self._min_games)
+            self._stats_cache[request.patch] = stats
         our_team = self._teams.get(self._our_team_id)
         scorer = Scorer(
             stats,
@@ -120,7 +126,7 @@ class DraftEngine:
 
         return DraftResponse(
             game_number=context.game_number,
-            patches_used=list(stats.patches),
+            patches_used=list(stats.all_patches()),
             next_slot=(
                 to_slot_model(context.next_slot, request.our_side) if context.next_slot else None
             ),
@@ -182,13 +188,19 @@ class DraftEngine:
         notes: list[str] = []
         if stats.game_count < self._min_games:
             notes.append(
-                f"Limited data: only {stats.game_count} pro games on patches "
+                f"Limited global sample: only {stats.game_count} pro games on patches "
                 f"{', '.join(stats.patches)}."
             )
         if stats.team_games(opponent.team_id) == 0:
             notes.append(
                 f"No recorded games for {opponent.name} on these patches, "
                 "so their tendencies are unknown."
+            )
+        elif stats.team_games(opponent.team_id) < MIN_SUBJECT_GAMES:
+            games = stats.team_games(opponent.team_id)
+            notes.append(
+                f"Limited opponent history: only {games} recorded game"
+                f"{'s' if games != 1 else ''} for {opponent.name}; tendencies may be unreliable."
             )
         return " ".join(notes) or None
 

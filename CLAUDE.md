@@ -6,8 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-This repository is currently empty aside from a `LICENSE` file — there is no source code, build configuration, or documentation yet. This file is a placeholder.
+The repository contains a Python backend in `backend/`: a streamed GRID data pipeline,
+patch aggregates, a stateless FastAPI draft API, Fearless draft validation, and an explainable
+statistical scorer. The PyTorch recommendation model, genetic algorithm, and Next.js frontend are
+planned; see [README.md](README.md#roadmap) for the roadmap.
 
-Once the project takes shape, update this file with:
-- Build, lint, and test commands (including how to run a single test)
-- High-level architecture notes that span multiple files/modules
+Run backend checks from `backend/` with `uv run pytest -q`, `uv run ruff check .`,
+`uv run ruff format --check .`, and `uv run basedpyright`. Build local derived data with
+`uv run python -m app.pipeline.build`; start the API with `uv run uvicorn app.api.main:app`.
+Keep the GRID data repository outside this project and set `STL_DATA_DIR` when it is not at the
+documented sibling path. Never commit data or derived artifacts.

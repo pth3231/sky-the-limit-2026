@@ -1,7 +1,8 @@
 """Fearless series rules and validation of the submitted draft state."""
 
 from collections.abc import Collection, Iterable, Sequence
-from dataclasses import dataclass
+
+from pydantic import BaseModel, ConfigDict
 
 from app.engine.draft_order import DRAFT_ORDER, DraftSlot
 from app.engine.errors import DraftStateError
@@ -11,9 +12,10 @@ _MAX_PICKS_PER_SIDE = 5
 _GAMES_IN_FORMAT: dict[SeriesFormat, int] = {"bo1": 1, "bo3": 3, "bo5": 5}
 
 
-@dataclass(frozen=True, slots=True)
-class DraftContext:
+class DraftContext(BaseModel):
     """A validated draft state split by team and action."""
+
+    model_config = ConfigDict(frozen=True)
 
     game_number: int
     series_format: SeriesFormat
@@ -63,10 +65,16 @@ def _validate_previous_games(request: DraftRequest, known: Collection[str]) -> t
     for number, game in enumerate(request.previous_games, start=1):
         if wins >= needed or losses >= needed:
             raise DraftStateError(f"The series was already decided before game {number}")
-        if len(game.our_picks) > _MAX_PICKS_PER_SIDE or (
-            len(game.opponent_picks) > _MAX_PICKS_PER_SIDE
+        if (
+            len(game.our_picks) > _MAX_PICKS_PER_SIDE
+            or len(game.opponent_picks) > _MAX_PICKS_PER_SIDE
         ):
             raise DraftStateError(f"Game {number} can have at most 5 picks per team")
+        if (
+            len(game.our_picks) != _MAX_PICKS_PER_SIDE
+            or len(game.opponent_picks) != _MAX_PICKS_PER_SIDE
+        ):
+            raise DraftStateError(f"Completed game {number} must have exactly 5 picks per team")
         picks = [*game.our_picks, *game.opponent_picks]
         _require_known(picks, known)
         _require_unique(picks, f"game {number}")

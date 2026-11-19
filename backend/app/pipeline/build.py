@@ -4,11 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
-from app.config import DEFAULT_DERIVED_DIR, Settings
+from app.config import Settings
 from app.pipeline.aggregates import PatchAggregate, compute_aggregates
 from app.pipeline.dataset import GameDraft, build_game_drafts
-
-DEFAULT_OUTPUT_DIR = DEFAULT_DERIVED_DIR
 
 
 def build_outputs(
@@ -41,15 +39,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--out",
         type=Path,
-        default=DEFAULT_OUTPUT_DIR,
-        help="Output directory (default: backend/.derived)",
+        default=None,
+        help="Output directory (default: DRAFT_COACH_DERIVED_DIR or backend/.derived)",
     )
     arguments = parser.parse_args(argv)
 
-    game_drafts, aggregates = build_outputs(Settings().data_dir, arguments.out)
+    settings = Settings()
+    output_dir = arguments.out or settings.derived_dir
+    game_drafts, aggregates = build_outputs(settings.data_dir, output_dir)
     print(
         f"Wrote {len(game_drafts)} game drafts and {len(aggregates)} patch aggregates "
-        f"to {arguments.out}"
+        f"to {output_dir}"
     )
 
 

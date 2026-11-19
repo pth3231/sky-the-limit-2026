@@ -38,10 +38,7 @@ def resolve_data_dir(env: Mapping[str, str], candidates: Iterable[Path]) -> Path
 
 def _default_data_dir() -> Path:
     project_root = Path(__file__).resolve().parents[2]
-    candidates = (
-        project_root / "stl-hackathon-2026-grid-starter",
-        project_root.parent / "stl-hackathon-2026-grid-starter",
-    )
+    candidates = (project_root.parent / "stl-hackathon-2026-grid-starter",)
     return resolve_data_dir(os.environ, candidates)
 
 

@@ -1,7 +1,9 @@
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
 
+import app.config as config_module
 from app.config import DEFAULT_DERIVED_DIR, Settings, resolve_data_dir
 
 
@@ -42,6 +44,24 @@ def test_settings_reads_stl_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("STL_DATA_DIR", str(data_dir))
 
     assert Settings().data_dir == data_dir
+
+
+def test_default_data_lookup_uses_only_the_sibling_dataset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[Path] = []
+
+    def capture_candidates(env: Mapping[str, str], candidates: Sequence[Path]) -> Path:
+        captured.extend(candidates)
+        return candidates[0]
+
+    monkeypatch.setattr(config_module, "resolve_data_dir", capture_candidates)
+
+    resolved = config_module._default_data_dir()
+    project_root = Path(config_module.__file__).resolve().parents[2]
+
+    assert resolved == project_root.parent / "stl-hackathon-2026-grid-starter"
+    assert captured == [resolved]
 
 
 def test_settings_default_and_override_derived_dir_and_team(

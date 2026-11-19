@@ -12,8 +12,8 @@ artifacts must never be committed or pushed.
 ## Decisions
 
 - Use Python 3.12 with `uv` and `zstandard` for streaming `.jsonl.zst` feeds.
-- Resolve the data directory from `STL_DATA_DIR` when set; otherwise try the project-local
-  `stl-hackathon-2026-grid-starter/`, then the sibling `../stl-hackathon-2026-grid-starter/`.
+- Resolve the data directory from `STL_DATA_DIR` when set; otherwise use the sibling
+  `../stl-hackathon-2026-grid-starter/` so licensed data stays outside the project repository.
   Fail clearly if the selected directory does not contain `meta/`.
 - Write Pydantic v2 JSON outputs to ignored `backend/.derived/`: `drafts.json` and
   `aggregates.json`.

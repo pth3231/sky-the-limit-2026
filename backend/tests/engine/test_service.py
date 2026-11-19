@@ -10,7 +10,7 @@ from app.engine.models import DraftRequest
 from app.engine.service import DraftEngine, load_engine, resolve_our_team_id
 from app.pipeline.aggregates import compute_aggregates
 from app.pipeline.dataset import GameDraft
-from app.pipeline.meta import Team
+from app.pipeline.meta import Champion, Team
 
 BANS = ["c7", "c8", "c9", "c10", "c11", "c4"]
 
@@ -39,18 +39,23 @@ def test_our_slot_gets_a_legal_recommendation_and_alternatives(engine: DraftEngi
 
 
 def test_fearless_excluded_champions_are_never_suggested(engine: DraftEngine) -> None:
-    previous = {"ourPicks": ["c5"], "opponentPicks": ["c6"], "result": "loss"}
+    previous_picks = {"c0", "c1", "c2", "c3", "c5", "c6", "c12", "c13", "c14", "c15"}
+    previous = {
+        "ourPicks": ["c5", "c0", "c1", "c2", "c3"],
+        "opponentPicks": ["c6", "c12", "c13", "c14", "c15"],
+        "result": "loss",
+    }
 
     response = engine.recommend(_request(previousGames=[previous], actions=BANS))
 
     assert response.game_number == 2
-    assert response.fearless_excluded_ids == ["c5", "c6"]
+    assert set(response.fearless_excluded_ids) == previous_picks
     assert response.recommendation is not None
     suggested = {response.recommendation.champion_id} | {
         candidate.champion_id for candidate in response.alternatives
     }
-    assert not suggested & {"c5", "c6", *BANS}
-    assert set(response.unavailable_ids) == {"c5", "c6", *BANS}
+    assert not suggested & (previous_picks | set(BANS))
+    assert set(response.unavailable_ids) == previous_picks | set(BANS)
 
 
 def test_opponent_slot_shows_tendencies_without_recommendation(engine: DraftEngine) -> None:
@@ -92,12 +97,69 @@ def test_unknown_opponent_is_rejected(engine: DraftEngine) -> None:
         engine.recommend(_request(opponentTeamId="nobody"))
 
 
+def test_our_team_cannot_be_its_own_opponent(engine: DraftEngine) -> None:
+    with pytest.raises(DraftStateError, match="cannot play itself"):
+        engine.recommend(_request(opponentTeamId="c9"))
+
+
 def test_opponent_without_history_gets_a_plain_note(engine: DraftEngine) -> None:
     response = engine.recommend(_request(opponentTeamId="ghost", ourSide="red"))
 
     assert response.opponent_tendencies == []
     assert response.sample_note is not None
     assert "No recorded games for Ghost Team" in response.sample_note
+
+
+def test_thin_opponent_history_gets_a_caution_note(make_game: Any) -> None:
+    games = [
+        *(make_game(blue="t1", red="t2") for _ in range(80)),
+        make_game(blue="c9", red="opp", red_bans=["c4"]),
+    ]
+    champions = {
+        f"c{number}": Champion(character_id=f"c{number}", name=f"Champ {number}", games_played=0)
+        for number in range(24)
+    }
+    teams = {
+        team_id: Team(team_id=team_id, name=name)
+        for team_id, name in {
+            "c9": "Cloud9",
+            "opp": "Rivals",
+            "t1": "Team One",
+            "t2": "Team Two",
+        }.items()
+    }
+    engine = DraftEngine(compute_aggregates(games), champions, teams, our_team_id="c9")
+
+    response = engine.recommend(_request(ourSide="red"))
+
+    assert response.sample_note is not None
+    assert "only 1 recorded game for Rivals" in response.sample_note
+
+
+def test_opponent_history_from_older_patch_is_available(make_game: Any) -> None:
+    games = [
+        *(make_game("16.2", blue="t1", red="t2") for _ in range(60)),
+        *(make_game("16.1", blue="c9", red="opp", red_bans=["c4"]) for _ in range(10)),
+    ]
+    champions = {
+        f"c{number}": Champion(character_id=f"c{number}", name=f"Champ {number}", games_played=0)
+        for number in range(24)
+    }
+    teams = {
+        team_id: Team(team_id=team_id, name=name)
+        for team_id, name in {
+            "c9": "Cloud9",
+            "opp": "Rivals",
+            "t1": "Team One",
+            "t2": "Team Two",
+        }.items()
+    }
+    engine = DraftEngine(compute_aggregates(games), champions, teams, our_team_id="c9")
+
+    response = engine.recommend(_request(ourSide="red"))
+
+    assert response.patches_used == ["16.2", "16.1"]
+    assert response.opponent_tendencies[0].label == "Rivals banned it in 10 of 10 games"
 
 
 def test_lists_opponents_with_games_champions_and_patches(engine: DraftEngine) -> None:

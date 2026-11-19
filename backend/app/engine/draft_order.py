@@ -1,13 +1,14 @@
 """The standard 20-slot professional draft order."""
 
-from dataclasses import dataclass
+from pydantic import BaseModel, ConfigDict
 
 from app.engine.models import ActionType, Side, Slot, SlotOwner
 
 
-@dataclass(frozen=True, slots=True)
-class DraftSlot:
+class DraftSlot(BaseModel):
     """A position in the draft order and the side and action it belongs to."""
+
+    model_config = ConfigDict(frozen=True)
 
     index: int
     side: Side

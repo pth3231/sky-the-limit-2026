@@ -40,7 +40,10 @@ def create_app(engine: DraftEngine | None = None) -> FastAPI:
 
     @app.exception_handler(DraftStateError)
     async def draft_state_error(_: Request, error: DraftStateError) -> JSONResponse:
-        return JSONResponse(status_code=422, content={"detail": str(error)})
+        return JSONResponse(
+            status_code=422,
+            content={"detail": [{"loc": ["body"], "msg": str(error), "type": "draft_state"}]},
+        )
 
     @app.get("/health")
     def health() -> dict[str, str]:

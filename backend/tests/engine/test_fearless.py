@@ -1,6 +1,7 @@
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from app.engine.errors import DraftStateError
 from app.engine.fearless import build_context, fearless_excluded
@@ -96,10 +97,19 @@ def test_complete_draft_has_no_next_slot() -> None:
             },
             "at most 5",
         ),
+        ({"previousGames": [{"ourPicks": [], "opponentPicks": [], "result": "win"}]}, "exactly 5"),
+        (
+            {"previousGames": [{"ourPicks": ["c0"], "opponentPicks": ["c1"], "result": "win"}]},
+            "exactly 5",
+        ),
         (
             {
                 "previousGames": [
-                    {"ourPicks": ["c0"], "opponentPicks": ["c0"], "result": "win"},
+                    {
+                        "ourPicks": [f"c{number}" for number in range(5)],
+                        "opponentPicks": ["c0", "c5", "c6", "c7", "c8"],
+                        "result": "win",
+                    },
                 ]
             },
             "more than once",
@@ -111,3 +121,8 @@ def test_complete_draft_has_no_next_slot() -> None:
 def test_illegal_draft_states_are_rejected(overrides: dict[str, Any], message: str) -> None:
     with pytest.raises(DraftStateError, match=message):
         build_context(_request(**overrides), CHAMPIONS)
+
+
+def test_previous_game_requires_both_pick_lists() -> None:
+    with pytest.raises(ValidationError):
+        _request(previousGames=[{"result": "win"}])

@@ -55,10 +55,9 @@ queue) or Leaguepedia data, shown as a separate "current meta" badge.
 # Working with the data
 
 The GRID esports dataset (`stl-hackathon-2026-grid-starter`) is licensed for
-the hackathon only and is **never committed** to this repo. Clone it
-locally and point the project at it via `STL_DATA_DIR` (default: first
-`./stl-hackathon-2026-grid-starter`, then the sibling
-`../stl-hackathon-2026-grid-starter`). `.gitignore` excludes the data
+the hackathon only and is **never committed** to this repo. Keep its clone
+outside this project and point the project at it via `STL_DATA_DIR` (default:
+the sibling `../stl-hackathon-2026-grid-starter`). `.gitignore` excludes the data
 directory, `*.zst`/`*.jsonl` files, and derived artifacts
 (`*.parquet`, `*.sqlite`, `*.duckdb`). Before every commit, check the
 staged files (`git diff --cached --name-only`).
@@ -88,7 +87,8 @@ uv run pytest -q && uv run ruff check . && uv run basedpyright
 ```
 
 Settings come from the environment: `STL_DATA_DIR` (data repo),
-`DRAFT_COACH_DERIVED_DIR` (default `backend/.derived`), and `CLOUD9_TEAM_ID`
+`DRAFT_COACH_DERIVED_DIR` (default `backend/.derived`; also used as the
+pipeline build output unless `--out` is passed), and `CLOUD9_TEAM_ID`
 (default: the LoL team whose name starts with "Cloud9"). Endpoints:
 `GET /health`, `/teams`, `/champions`, `/patches`, and `POST /draft/recommend`,
 which takes the full series and draft state (camelCase JSON) and returns the

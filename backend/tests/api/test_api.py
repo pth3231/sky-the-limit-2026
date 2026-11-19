@@ -61,4 +61,6 @@ def test_illegal_draft_state_returns_422(client: TestClient, payload: dict[str, 
     response = client.post("/draft/recommend", json=payload)
 
     assert response.status_code == 422
-    assert isinstance(response.json()["detail"], str)
+    details = response.json()["detail"]
+    assert isinstance(details, list)
+    assert {"loc", "msg", "type"} <= set(details[0])

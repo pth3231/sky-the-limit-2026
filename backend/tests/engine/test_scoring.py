@@ -1,3 +1,4 @@
+import math
 from collections.abc import Callable
 
 import pytest
@@ -82,11 +83,27 @@ def test_small_samples_are_marked_limited(scorer: Scorer) -> None:
     assert unseen.contributing_factors[0].signal == "limited"
 
 
+def test_pick_reason_distinguishes_raise_lower_and_unchanged(scorer: Scorer) -> None:
+    unchanged = scorer.score_pick("N", our_picks=(), opponent_picks=())
+    lowered = scorer.score_pick("W", our_picks=(), opponent_picks=())
+
+    assert unchanged.reason.startswith("Keeps your estimated game win chance unchanged at")
+    assert lowered.reason.startswith("Lowers your estimated game win chance to")
+
+
 def test_factors_are_ordered_by_impact(scorer: Scorer) -> None:
     candidate = scorer.score_pick("A", our_picks=("L",), opponent_picks=())
 
     impacts = [abs(factor.impact) for factor in candidate.contributing_factors]
     assert impacts == sorted(impacts, reverse=True)
+
+
+def test_factor_impacts_use_probability_points(scorer: Scorer) -> None:
+    candidate = scorer.score_pick("A", our_picks=(), opponent_picks=())
+    meta = next(factor for factor in candidate.contributing_factors if "pro games" in factor.label)
+    expected = round(1 / (1 + math.exp(-1.2 * 0.1)) - 0.5, 3)
+
+    assert meta.impact == expected
 
 
 def test_ban_targets_the_opponents_comfort_pick(scorer: Scorer) -> None:
@@ -122,6 +139,23 @@ def test_stacked_signals_stay_believable(make_game: Callable[..., GameDraft]) ->
     )
 
     assert 0.7 < scorer.game_win_probability(lineup, ()) < 0.85
+
+
+def test_side_factor_reports_no_decided_game_evidence(
+    make_game: Callable[..., GameDraft],
+) -> None:
+    stats = blend_patches(compute_aggregates([make_game(winner=None)]), None, min_games=1)
+    scorer = Scorer(
+        stats,
+        champion_names=NAMES,
+        our_team_id="c9",
+        our_team_name="Cloud9",
+        opponent_team_id="opp",
+        opponent_team_name="Rivals",
+        our_side="blue",
+    )
+
+    assert scorer.composition_factors((), ())[0].label == "No decided pro games on these patches"
 
 
 @pytest.mark.parametrize(
