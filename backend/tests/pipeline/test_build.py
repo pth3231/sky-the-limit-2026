@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import app.pipeline.build as build_module
 from app.pipeline.build import main
 
 
@@ -79,3 +80,22 @@ def test_build_writes_drafts_and_aggregates_json(
     assert drafts[0]["actions"][0]["champion_id"] == "champ-1"
     assert aggregates["15.10"]["champions"][0]["picks"] == 1
     assert aggregates["15.10"]["sides"]["blue_wins"] == 1
+
+
+def test_configured_derived_dir_is_the_default_output(tmp_path: Path, monkeypatch: Any) -> None:
+    data_dir = tmp_path / "data"
+    (data_dir / "meta").mkdir(parents=True)
+    output_dir = tmp_path / "configured-derived"
+    monkeypatch.setenv("STL_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("DRAFT_COACH_DERIVED_DIR", str(output_dir))
+    calls: list[tuple[Path, Path]] = []
+
+    monkeypatch.setattr(
+        build_module,
+        "build_outputs",
+        lambda source, destination: calls.append((source, destination)) or ([], {}),
+    )
+
+    main([])
+
+    assert calls == [(data_dir, output_dir)]

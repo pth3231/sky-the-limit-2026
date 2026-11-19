@@ -7,6 +7,8 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_DERIVED_DIR = Path(__file__).resolve().parents[1] / ".derived"
+
 
 def _require_meta(data_dir: Path) -> Path:
     resolved = data_dir.expanduser().resolve()
@@ -36,10 +38,7 @@ def resolve_data_dir(env: Mapping[str, str], candidates: Iterable[Path]) -> Path
 
 def _default_data_dir() -> Path:
     project_root = Path(__file__).resolve().parents[2]
-    candidates = (
-        project_root / "stl-hackathon-2026-grid-starter",
-        project_root.parent / "stl-hackathon-2026-grid-starter",
-    )
+    candidates = (project_root.parent / "stl-hackathon-2026-grid-starter",)
     return resolve_data_dir(os.environ, candidates)
 
 
@@ -49,6 +48,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(populate_by_name=True)
 
     data_dir: Path = Field(default_factory=_default_data_dir, validation_alias="STL_DATA_DIR")
+    derived_dir: Path = Field(
+        default=DEFAULT_DERIVED_DIR, validation_alias="DRAFT_COACH_DERIVED_DIR"
+    )
+    cloud9_team_id: str | None = Field(default=None, validation_alias="CLOUD9_TEAM_ID")
 
     @field_validator("data_dir")
     @classmethod
