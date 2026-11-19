@@ -71,6 +71,17 @@ class TeamChampionAggregate(BaseModel):
     banned_against: int
 
 
+class TeamAggregate(BaseModel):
+    """A team's game count, decided game count, and wins on a patch."""
+
+    model_config = ConfigDict(frozen=True)
+
+    team_id: str
+    games: int
+    decided_games: int
+    wins: int
+
+
 class PatchAggregate(BaseModel):
     """All draft aggregates for a single patch."""
 
@@ -82,6 +93,7 @@ class PatchAggregate(BaseModel):
     sides: SideAggregate
     synergies: list[ChampionPairAggregate]
     team_champions: list[TeamChampionAggregate]
+    teams: list[TeamAggregate]
 
 
 @dataclass(slots=True)
@@ -109,6 +121,13 @@ class _TeamChampionCounts:
     banned_against: int = 0
 
 
+@dataclass(slots=True)
+class _TeamCounts:
+    games: int = 0
+    decided_games: int = 0
+    wins: int = 0
+
+
 UNKNOWN_PATCH = "unknown"
 _NUMERIC_PATCH = re.compile(r"\d+(\.\d+)*")
 
@@ -119,7 +138,7 @@ def _patch_label(patch: str) -> str:
     return stripped if _NUMERIC_PATCH.fullmatch(stripped) else UNKNOWN_PATCH
 
 
-def _patch_sort_key(patch: str) -> tuple[int, ...]:
+def patch_sort_key(patch: str) -> tuple[int, ...]:
     """Convert a dotted numeric patch version to a sortable tuple.
 
     The ``unknown`` bucket (blank or non-numeric patches) sorts older than every numeric patch.
@@ -141,14 +160,21 @@ def compute_aggregates(game_drafts: Sequence[GameDraft]) -> dict[str, PatchAggre
         games_by_patch[_patch_label(game.patch)].append(game)
 
     aggregates: dict[str, PatchAggregate] = {}
-    for patch in sorted(games_by_patch, key=_patch_sort_key):
+    for patch in sorted(games_by_patch, key=patch_sort_key):
         games = games_by_patch[patch]
         champions: dict[str, _ChampionCounts] = {}
         synergies: dict[tuple[str, str], _PairCounts] = {}
         team_champions: dict[tuple[str, str], _TeamChampionCounts] = {}
+        team_totals: dict[str, _TeamCounts] = defaultdict(_TeamCounts)
 
         for game in games:
             decided = _is_decided(game)
+            for team_id in (game.blue_team_id, game.red_team_id):
+                totals = team_totals[team_id]
+                totals.games += 1
+                if decided:
+                    totals.decided_games += 1
+                    totals.wins += game.winner_team_id == team_id
             picked_by_team: dict[str, set[str]] = defaultdict(set)
             for action in game.actions:
                 if action.team_id not in {game.blue_team_id, game.red_team_id}:
@@ -248,6 +274,15 @@ def compute_aggregates(game_drafts: Sequence[GameDraft]) -> dict[str, PatchAggre
             ),
             synergies=synergy_results,
             team_champions=team_results,
+            teams=[
+                TeamAggregate(
+                    team_id=team_id,
+                    games=counts.games,
+                    decided_games=counts.decided_games,
+                    wins=counts.wins,
+                )
+                for team_id, counts in sorted(team_totals.items())
+            ],
         )
 
     return aggregates
@@ -262,7 +297,7 @@ def blend_recent(
         raise ValueError("min_games must be a positive integer")
 
     selected: list[GameDraft] = []
-    for patch in sorted(patches, key=_patch_sort_key, reverse=True):
+    for patch in sorted(patches, key=patch_sort_key, reverse=True):
         selected.extend(patches[patch])
         if len(selected) >= min_games:
             break

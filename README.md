@@ -49,7 +49,7 @@ queue) or Leaguepedia data, shown as a separate "current meta" badge.
 | [docs/superpowers/specs/](docs/superpowers/specs/) | Approved design spec(s): architecture, data pipeline, GA+NN engine, Fearless flow, UI, testing. |
 | [CONVENTIONS.md](CONVENTIONS.md) | Commit, branch, issue, PR, and coding conventions (Python + TypeScript). |
 | [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | Rules for AI coding agents — most importantly, GRID data handling. |
-| `backend/` *(planned)* | Python / FastAPI (`uv`, Ruff, Pyright, Pydantic v2): data pipeline, NN training + inference (PyTorch), GA, API. |
+| `backend/` | Python / FastAPI (`uv`, Ruff, Pyright, Pydantic v2): data pipeline and draft API (built); NN training + inference (PyTorch) and GA (planned). |
 | `frontend/` *(planned)* | Next.js + TypeScript strict (Tailwind, Zustand, Vitest, Playwright): draft board, champion grid, win-rate meter, insights panel. |
 
 # Working with the data
@@ -75,6 +75,26 @@ How the pipeline uses it (details in the spec, section 3):
   live API never re-parses raw feeds. LoL coverage ends at LCS Promotion
   2026 (2026-10-12), so the newest patch in the data may lag the live
   patch — the "most recent patch, blend in older if thin" rule covers this.
+
+# Running the backend
+
+From `backend/` (Python 3.12 via `uv`):
+
+```bash
+uv sync                                      # install dependencies
+uv run python -m app.pipeline.build          # GRID data -> backend/.derived/ (ignored)
+uv run uvicorn app.api.main:app --reload     # API on http://127.0.0.1:8000 (docs at /docs)
+uv run pytest -q && uv run ruff check . && uv run basedpyright
+```
+
+Settings come from the environment: `STL_DATA_DIR` (data repo),
+`DRAFT_COACH_DERIVED_DIR` (default `backend/.derived`), and `CLOUD9_TEAM_ID`
+(default: the LoL team whose name starts with "Cloud9"). Endpoints:
+`GET /health`, `/teams`, `/champions`, `/patches`, and `POST /draft/recommend`,
+which takes the full series and draft state (camelCase JSON) and returns the
+recommended move, alternatives, game and series win rates, opponent
+tendencies, and plain-language contributing factors. Illegal draft states
+(Fearless repeats, duplicates, unknown champions or patches) return 422.
 
 # Development workflow
 

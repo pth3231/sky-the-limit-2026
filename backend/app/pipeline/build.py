@@ -4,11 +4,11 @@ import argparse
 import json
 from pathlib import Path
 
-from app.config import Settings
+from app.config import DEFAULT_DERIVED_DIR, Settings
 from app.pipeline.aggregates import PatchAggregate, compute_aggregates
 from app.pipeline.dataset import GameDraft, build_game_drafts
 
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[2] / ".derived"
+DEFAULT_OUTPUT_DIR = DEFAULT_DERIVED_DIR
 
 
 def build_outputs(

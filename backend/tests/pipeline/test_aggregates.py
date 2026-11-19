@@ -144,6 +144,20 @@ def test_undecided_games_are_excluded_from_win_rate_denominators() -> None:
     assert patch.synergies == []
 
 
+def test_counts_games_and_decided_wins_per_team() -> None:
+    games = [
+        _game("won", "15.10", "blue", []),
+        _game("lost", "15.10", "red", []),
+        _game("unfinished", "15.10", "blue", [], finished=False),
+    ]
+
+    patch = compute_aggregates(games)["15.10"]
+    teams = {item.team_id: item for item in patch.teams}
+
+    assert (teams["blue"].games, teams["blue"].decided_games, teams["blue"].wins) == (3, 2, 1)
+    assert (teams["red"].games, teams["red"].decided_games, teams["red"].wins) == (3, 2, 1)
+
+
 def test_blue_ban_is_recorded_against_red_team() -> None:
     game = _game("game-1", "15.10", "blue", [_action(1, "ban", "blue", "Z")])
 
