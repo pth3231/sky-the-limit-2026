@@ -1,0 +1,57 @@
+"""Build local draft and aggregate JSON artifacts from the GRID dataset."""
+
+import argparse
+import json
+from pathlib import Path
+
+from app.config import Settings
+from app.pipeline.aggregates import PatchAggregate, compute_aggregates
+from app.pipeline.dataset import GameDraft, build_game_drafts
+
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[2] / ".derived"
+
+
+def build_outputs(
+    data_dir: Path,
+    output_dir: Path,
+) -> tuple[list[GameDraft], dict[str, PatchAggregate]]:
+    """Build game drafts and patch aggregates, writing both JSON artifacts."""
+    game_drafts = build_game_drafts(data_dir)
+    aggregates = compute_aggregates(game_drafts)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    drafts_payload = [game.model_dump(mode="json") for game in game_drafts]
+    aggregates_payload = {
+        patch: aggregate.model_dump(mode="json") for patch, aggregate in aggregates.items()
+    }
+    (output_dir / "drafts.json").write_text(
+        json.dumps(drafts_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "aggregates.json").write_text(
+        json.dumps(aggregates_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return game_drafts, aggregates
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Run the data pipeline command-line entry point."""
+    parser = argparse.ArgumentParser(description="Build Draft Coach local data artifacts.")
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help="Output directory (default: backend/.derived)",
+    )
+    arguments = parser.parse_args(argv)
+
+    game_drafts, aggregates = build_outputs(Settings().data_dir, arguments.out)
+    print(
+        f"Wrote {len(game_drafts)} game drafts and {len(aggregates)} patch aggregates "
+        f"to {arguments.out}"
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -9,3 +9,11 @@ stl-hackathon-2026-grid-starter/
 
 # Local Python environment
 .venv/
+
+# Python and pytest caches
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Derived pipeline outputs (GRID data)
+backend/.derived/
