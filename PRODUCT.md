@@ -69,9 +69,13 @@ itself needs to address.
 - Data source: GRID esports data (`stl-hackathon-2026-grid-starter`),
   proprietary/licensed for the hackathon only — never committed to this
   repo (see `AGENTS.md`). External data (Riot Developer API for
-  Diamond-Challenger solo queue stats, and/or Leaguepedia) is an optional
-  stretch goal, surfaced only as a separate "current meta" badge; it never
-  blocks or changes the core demo.
+  Diamond-Challenger solo queue stats, Oracle's Elixir, and/or Leaguepedia)
+  is an optional stretch goal that never blocks or changes the core demo;
+  see `docs/superpowers/specs/2026-11-21-recommendation-model-improvements-design.md`
+  for how it's planned to be used. Riot Developer API use alongside GRID
+  data is confirmed allowed by Cloud9 (see `AGENTS.md`), but requires a
+  personal, Riot-approved API key, and that key must stay server-side only
+  if this project is ever deployed as a public demo.
 - Solo project; `main` is protected, changes land via PR (see
   `CONVENTIONS.md`).
 

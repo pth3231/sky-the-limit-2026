@@ -103,13 +103,17 @@ an issue, squash-merged with the PR title as the commit message. Branches
 are `type/issue-number-slug`; commits follow Conventional Commits. Full
 details in [CONVENTIONS.md](CONVENTIONS.md).
 
-Tooling: PyCharm (backend) and WebStorm (frontend). `.idea/` (shared
-project config) and `docs/` (specs, plans) are committed alongside the code
-they relate to, in the same PR; nothing derived from the GRID data is ever
-committed or pushed — see
+Tooling: PyCharm (backend) and WebStorm (frontend). `.idea/` and `.junie/`
+(shared project and Junie plan config) and `docs/` (specs, plans) are
+committed alongside the code they relate to, in the same PR, as evidence of
+JetBrains tooling use for the hackathon; nothing derived from the GRID data
+is ever committed or pushed — see
 [CONVENTIONS.md](CONVENTIONS.md#what-gets-committed). Test-driven development is mandatory;
 linters, formatters, and type checkers per stack are listed in
-[CONVENTIONS.md](CONVENTIONS.md#coding-conventions).
+[CONVENTIONS.md](CONVENTIONS.md#coding-conventions). The hackathon's
+JetBrains-tool requirement doesn't require Junie specifically — any
+JetBrains IDE, Air, or Junie satisfies it; this project uses PyCharm and
+WebStorm as its primary tools.
 
 # Roadmap
 

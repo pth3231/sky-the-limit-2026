@@ -30,6 +30,31 @@ Before doing any work in this repo, read these in order. Each owns a distinct ki
 - **Final results** come from the `seriesState` of the last event that has one. Per-event changes are in `seriesStateDelta`.
 - **Joins.** Supplement `grid_event_id` = GRID `events[].id`. Supplement `occurred_at` = envelope `occurredAt`. `player_id`/`game_id` are GRID IDs. All IDs are strings.
 - **Other license constraints.** Don't upload, publish or mirror the data, or derived datasets containing it, anywhere outside the user's machine. Don't add the data to model-training pipelines that outlive the hackathon. The license to use the data ends when the hackathon ends (copies don't have to be deleted unless Cloud9 asks in writing, but must not be used). Projects should read data from a local clone of this repository. Small excerpts are acceptable only to demonstrate the project to judges. See [LICENSE](LICENSE.md).
+- **Riot Developer API is allowed alongside GRID data**, confirmed by Cloud9
+  staff in the hackathon Discord (2026-11-19/20). Combining Riot API
+  champion/pick data with GRID stats (e.g. showing solo-queue champion
+  counts next to GRID stage stats) is fine — the data license's §3(e)
+  restriction on combining data only targets profiling individuals with
+  PII/real identities for harassment, not aggregate champion-level data.
+  Using the Riot API requires **your own personal Riot Developer API key**,
+  approved by Riot; apply honestly describing the actual use case (a
+  pre-match coaching tool, not live "scouting" — Riot's policy defines
+  scouting narrowly as seeing an opponent's stats before a match the app
+  itself would otherwise reveal, which doesn't apply here). GRID-only work
+  doesn't need a Riot key; only add one when actually integrating Riot API
+  data (see the recommendation-model-improvements spec's Riot API
+  milestone). **If/when any part of this project is deployed as a public
+  demo, the Riot API key must be held and used server-side only, never
+  shipped to or readable by a browser/client** — Cloud9 will not transmit
+  their own key to a participant-hosted demo over the internet.
+- **Hosting a public demo that serves real GRID-derived stats is the
+  intended use**, confirmed by Cloud9 staff: "we gave you access to the
+  real `.jsonl.zst` files so you could serve the statistics and insights
+  derived from those GRID source files for the purposes of the hackathon."
+  A synthetic sample file is allowed too but not required; either way, any
+  fabricated/synthetic data shown in a demo must be clearly labeled as such
+  to the viewer, and the app should not require a local file upload to be
+  functional. A password-protected demo visible only to judges is fine.
 
 ## Workflow conventions for AI agents
 
