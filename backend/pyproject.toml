@@ -5,6 +5,7 @@ description = "Data pipeline and backend for Draft Coach"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115,<1",
+    "orjson>=3.10,<4",
     "pydantic>=2.10,<3",
     "pydantic-settings>=2.6,<3",
     "uvicorn>=0.32,<1",
