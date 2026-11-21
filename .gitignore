@@ -29,8 +29,11 @@ model_metrics.json
 
 # AI tool artifacts
 .impeccable/
-.junie/
 .playwright-mcp/
+
+# .junie/ is intentionally NOT ignored: Cloud9 asked participants to commit it (and .air/, .run/
+# if present) as supporting evidence of JetBrains tool use in the hackathon Discord, as long as it
+# holds no sensitive info. Check new .junie/ content for secrets before committing.
 
 # Frontend build output
 frontend/.next/
