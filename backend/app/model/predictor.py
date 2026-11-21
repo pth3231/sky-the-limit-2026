@@ -26,7 +26,7 @@ class WinPredictor:
     @classmethod
     def load(cls, path: Path) -> "WinPredictor":
         """Load a local model checkpoint and its serialized feature space.
-        
+
         Uses GPU (CUDA) when available, falling back to CPU otherwise.
         """
         torch = _torch_module()
@@ -58,7 +58,7 @@ class WinPredictor:
 
     def predict(self, states: Sequence[DraftState]) -> list[float]:
         """Predict blue-side game win probabilities for a batch of draft states.
-        
+
         Uses GPU (CUDA) when available for faster inference.
         """
         if not states:

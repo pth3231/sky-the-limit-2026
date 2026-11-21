@@ -106,7 +106,7 @@ def extract_game_lineups(series_state: dict[str, Any]) -> dict[str, list[PlayerL
             team_kills = _number(team.get("kills"))
             team_gold = _number(team.get("totalMoneyEarned"))
             team_lines: list[PlayerLine] = []
-            for index, player in enumerate(players[:5]):
+            for player in players[:5]:
                 character = player.get("character", {})
                 champion_id = character.get("id") if isinstance(character, dict) else None
                 if not isinstance(champion_id, str):
@@ -114,7 +114,11 @@ def extract_game_lineups(series_state: dict[str, Any]) -> dict[str, list[PlayerL
                     break
 
                 position = player.get("position")
-                role = _ROLE_NAMES.get(position.strip().casefold()) if isinstance(position, str) else None
+                role = (
+                    _ROLE_NAMES.get(position.strip().casefold())
+                    if isinstance(position, str)
+                    else None
+                )
                 player_gold = _number(player.get("totalMoneyEarned"))
                 participations = _number(player.get("kills")) + _number(
                     player.get("killAssistsGiven")
