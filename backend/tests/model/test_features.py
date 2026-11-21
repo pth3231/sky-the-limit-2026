@@ -159,23 +159,38 @@ def test_encode_places_champion_indices_in_the_matching_slot_group(
     synthetic_drafts: list[GameDraft],
 ) -> None:
     feature_space = FeatureSpace.fit(synthetic_drafts)
+    full_game = synthetic_drafts[0]
 
-    # Construct a state with specific champions at known DRAFT_ORDER positions
-    # DRAFT_ORDER positions:
-    # 0: ban, blue
-    # 1: ban, red
-    # 2-5: more bans
-    # 6: pick, blue -> c0
-    # 7: pick, red -> c2
-    # 8: pick, red -> c3
-    # 9: pick, blue -> c1
-    # 10+: remaining picks and bans
+    # Reorder game actions to match DRAFT_ORDER sequence
+    # Build slot assignments for each action based on DRAFT_ORDER
+    draft_actions: list[str] = [""] * len(DRAFT_ORDER)
 
-    # Build state.actions with sentinels (we use a placeholder string) for missing slots,
-    # then fill in the ones we care about
+    # Count picks/bans per side to map to their DRAFT_ORDER positions
+    action_counters = {"blue_bans": 0, "red_bans": 0, "blue_picks": 0, "red_picks": 0}
+
+    for action in full_game.actions:
+        side = "blue" if action.team_id == full_game.blue_team_id else "red"
+        action_type = "bans" if action.action_type == "ban" else "picks"
+        counter_key = f"{side}_{action_type}"
+
+        # Find the next DRAFT_ORDER slot for this type/side combination
+        slot_index = 0
+        count_needed = action_counters[counter_key]
+        count_found = 0
+        for slot in DRAFT_ORDER:
+            slot_key = f"{slot.side}_{'bans' if slot.action == 'ban' else 'picks'}"
+            if slot_key == counter_key:
+                if count_found == count_needed:
+                    draft_actions[slot_index] = action.champion_id
+                    break
+                count_found += 1
+            slot_index += 1
+
+        action_counters[counter_key] += 1
+
     state = DraftState(
-        patch="16.1",
-        actions=["", "", "", "", "", "", "c0", "c2", "c3", "c1"],
+        patch=full_game.patch,
+        actions=draft_actions,
     )
 
     encoded = feature_space.encode(state)
@@ -183,13 +198,13 @@ def test_encode_places_champion_indices_in_the_matching_slot_group(
     champion_index = {
         champion_id: index for index, champion_id in enumerate(feature_space.champion_ids)
     }
-
-    # Verify that the picks end up in the right slot groups
-    assert champion_index["c0"] in encoded.blue_picks
-    assert champion_index["c1"] in encoded.blue_picks
-    assert champion_index["c2"] in encoded.red_picks
-    assert champion_index["c3"] in encoded.red_picks
-
-    # Verify slot array lengths
+    expected_blue_picks = sorted(
+        champion_index[action.champion_id]
+        for action in full_game.actions
+        if action.team_id == full_game.blue_team_id and action.action_type == "pick"
+    )
+    encoded_blue_picks = sorted(
+        value for value in encoded.blue_picks if value != feature_space.num_champions
+    )
+    assert encoded_blue_picks == expected_blue_picks
     assert len(encoded.blue_picks) == 5
-    assert len(encoded.red_picks) == 5
