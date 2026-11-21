@@ -33,6 +33,12 @@ Before doing any work in this repo, read these in order. Each owns a distinct ki
 
 ## Workflow conventions for AI agents
 
+- **Issue-first rule (The Issue-First Rule):** Every task requires a GitHub
+  issue before any work begins — code, documentation, or convention changes.
+  Create the issue before branching. If you realize mid-work that no issue
+  exists, stop and create one before committing. This ensures every PR has
+  an issue to close and every change is traceable. See
+  [CONVENTIONS.md](CONVENTIONS.md#issues) for details.
 - **Auto-close issues on PR merge:** When creating a Pull Request, the PR
   description **must** include `Closes #<issue-number>` on its own line so
   GitHub automatically closes the related issue when the PR is merged. If

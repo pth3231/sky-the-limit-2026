@@ -25,8 +25,14 @@ Every branch traces back to an issue — see Issues below.
 
 - Title: `[Area] Short description` (e.g. `[GA] Legal-pool check fails after Game 2`).
 - One type label per issue: `bug`, `feature`, `chore`, `question`.
-- Open an issue before starting a branch, including for small fixes — the
-  branch name's issue number depends on it.
+- **Every task requires an issue.** Open an issue before starting any work —
+  code, documentation, or conventions. The branch name's issue number depends
+  on it, and the PR must reference it. No exceptions, not for small fixes or
+  documentation-only changes.
+- **Named rule — The Issue-First Rule:** An issue exists before a branch is
+  created. If you realize mid-work that no issue was opened, stop and create
+  one before committing. This ensures every change is traceable and every PR
+  has an issue to close.
 
 ## Pull requests
 
