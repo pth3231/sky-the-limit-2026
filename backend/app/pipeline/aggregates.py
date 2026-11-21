@@ -56,6 +56,18 @@ class ChampionPairAggregate(BaseModel):
     wins: int
 
 
+class ChampionMatchupAggregate(BaseModel):
+    """One champion's per-role win count against a specific opposing champion, in decided games."""
+
+    model_config = ConfigDict(frozen=True)
+
+    role: str
+    champion_id: str
+    opponent_champion_id: str
+    games: int
+    wins: int
+
+
 class TeamChampionAggregate(BaseModel):
     """A team's pick, win, ban, and against-ban counts for one champion."""
 
@@ -93,6 +105,7 @@ class PatchAggregate(BaseModel):
     synergies: list[ChampionPairAggregate]
     team_champions: list[TeamChampionAggregate]
     teams: list[TeamAggregate]
+    matchups: list[ChampionMatchupAggregate]
 
 
 class _ChampionCounts(BaseModel):
@@ -105,6 +118,11 @@ class _ChampionCounts(BaseModel):
 
 
 class _PairCounts(BaseModel):
+    games: int = 0
+    wins: int = 0
+
+
+class _MatchupCounts(BaseModel):
     games: int = 0
     wins: int = 0
 
@@ -161,6 +179,7 @@ def compute_aggregates(game_drafts: Sequence[GameDraft]) -> dict[str, PatchAggre
         synergies: dict[tuple[str, str], _PairCounts] = {}
         team_champions: dict[tuple[str, str], _TeamChampionCounts] = {}
         team_totals: dict[str, _TeamCounts] = defaultdict(_TeamCounts)
+        matchups: dict[tuple[str, str, str], _MatchupCounts] = {}
 
         for game in games:
             decided = _is_decided(game)
@@ -223,6 +242,26 @@ def compute_aggregates(game_drafts: Sequence[GameDraft]) -> dict[str, PatchAggre
                     if game.winner_team_id == team_id:
                         pair.wins += 1
 
+            lineup_by_role: dict[str, dict[str, str]] = defaultdict(dict)
+            for player in game.lineups:
+                if player.role is None:
+                    continue
+                lineup_by_role[player.role][player.team_id] = player.champion_id
+            for role, by_team in lineup_by_role.items():
+                blue_champion = by_team.get(game.blue_team_id)
+                red_champion = by_team.get(game.red_team_id)
+                if blue_champion is None or red_champion is None:
+                    continue
+                blue_won = game.winner_team_id == game.blue_team_id
+                forward = matchups.setdefault((role, blue_champion, red_champion), _MatchupCounts())
+                forward.games += 1
+                forward.wins += blue_won
+                backward = matchups.setdefault(
+                    (role, red_champion, blue_champion), _MatchupCounts()
+                )
+                backward.games += 1
+                backward.wins += not blue_won
+
         champion_results = [
             ChampionAggregate(
                 champion_id=champion_id,
@@ -256,6 +295,16 @@ def compute_aggregates(game_drafts: Sequence[GameDraft]) -> dict[str, PatchAggre
             )
             for team_champion, counts in sorted(team_champions.items())
         ]
+        matchup_results = [
+            ChampionMatchupAggregate(
+                role=key[0],
+                champion_id=key[1],
+                opponent_champion_id=key[2],
+                games=counts.games,
+                wins=counts.wins,
+            )
+            for key, counts in sorted(matchups.items())
+        ]
         decided_games = [game for game in games if _is_decided(game)]
         aggregates[patch] = PatchAggregate(
             patch=patch,
@@ -269,6 +318,7 @@ def compute_aggregates(game_drafts: Sequence[GameDraft]) -> dict[str, PatchAggre
             ),
             synergies=synergy_results,
             team_champions=team_results,
+            matchups=matchup_results,
             teams=[
                 TeamAggregate(
                     team_id=team_id,

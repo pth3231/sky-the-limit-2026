@@ -1,10 +1,11 @@
+from collections.abc import Callable
 from typing import Literal
 
 import pytest
 
 from app.pipeline.aggregates import blend_recent, compute_aggregates
 from app.pipeline.dataset import GameDraft
-from app.pipeline.drafts import DraftAction
+from app.pipeline.drafts import DraftAction, PlayerLine
 
 
 def _action(
@@ -214,6 +215,30 @@ def test_blends_newest_numeric_patch_versions_until_minimum_games() -> None:
         "older",
         "oldest",
     ]
+
+
+def test_computes_per_role_matchup_counts_from_lineups(make_game: Callable[..., GameDraft]) -> None:
+    def lineup(team: str, role: str, champion: str) -> PlayerLine:
+        return PlayerLine(team_id=team, role=role, champion_id=champion)
+
+    blue_win = make_game(
+        blue="blue", red="red", winner="blue", blue_picks=["A"], red_picks=["C"]
+    ).model_copy(update={"lineups": [lineup("blue", "top", "A"), lineup("red", "top", "C")]})
+    red_win = make_game(
+        blue="blue", red="red", winner="red", blue_picks=["A"], red_picks=["C"]
+    ).model_copy(update={"lineups": [lineup("blue", "top", "A"), lineup("red", "top", "C")]})
+    missing_role = make_game(blue="blue", red="red", winner="blue", blue_picks=["A"]).model_copy(
+        update={"lineups": [lineup("blue", "top", "A")]}
+    )
+
+    aggregates = compute_aggregates([blue_win, red_win, missing_role])
+    matchups = {
+        (item.role, item.champion_id, item.opponent_champion_id): item
+        for item in aggregates["16.1"].matchups
+    }
+
+    assert (matchups["top", "A", "C"].games, matchups["top", "A", "C"].wins) == (2, 1)
+    assert (matchups["top", "C", "A"].games, matchups["top", "C", "A"].wins) == (2, 1)
 
 
 def test_blank_patch_is_labeled_unknown_and_used_after_numeric_patches() -> None:
