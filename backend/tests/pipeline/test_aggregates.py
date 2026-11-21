@@ -5,7 +5,7 @@ import pytest
 
 from app.pipeline.aggregates import blend_recent, compute_aggregates
 from app.pipeline.dataset import GameDraft
-from app.pipeline.drafts import DraftAction, PlayerLine
+from app.pipeline.drafts import DraftAction, PlayerLine, Role
 
 
 def _action(
@@ -218,7 +218,7 @@ def test_blends_newest_numeric_patch_versions_until_minimum_games() -> None:
 
 
 def test_computes_per_role_matchup_counts_from_lineups(make_game: Callable[..., GameDraft]) -> None:
-    def lineup(team: str, role: str, champion: str) -> PlayerLine:
+    def lineup(team: str, role: Role, champion: str) -> PlayerLine:
         return PlayerLine(team_id=team, role=role, champion_id=champion)
 
     blue_win = make_game(

@@ -7,7 +7,7 @@ from app.engine.scoring import Scorer, series_win_probability, signal_for, smoot
 from app.engine.stats import blend_patches
 from app.pipeline.aggregates import compute_aggregates
 from app.pipeline.dataset import GameDraft
-from app.pipeline.drafts import PlayerLine
+from app.pipeline.drafts import PlayerLine, Role
 
 NAMES = {"A": "Ahri", "W": "Weakling", "L": "Lee Sin", "O": "Orianna", "N": "Nami", "R": "Rare"}
 
@@ -44,7 +44,7 @@ def scorer(make_game: Callable[..., GameDraft]) -> Scorer:
 
 @pytest.fixture
 def matchup_scorer(make_game: Callable[..., GameDraft]) -> Scorer:
-    def lineup(team: str, role: str, champion: str) -> PlayerLine:
+    def lineup(team: str, role: Role, champion: str) -> PlayerLine:
         return PlayerLine(team_id=team, role=role, champion_id=champion)
 
     def game(winner: str) -> GameDraft:
