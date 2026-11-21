@@ -46,10 +46,18 @@ they're combined, so the PR can report which change did what.
    games), and a parallel feature block in `features.py` for the NN. Surfaced in the
    plain-language "why" the same way existing ours/theirs factors are, per Product Principle
    2 (every recommendation shows its why).
-2. **Blue/red flip augmentation.** In `train.py`'s example generation, add a mirrored copy of
-   every example with blue/red swapped and the label flipped. Doubles effective training data
-   for free and removes any blue-side bias the model could otherwise learn instead of real
-   draft strength.
+2. **Shared champion embeddings across blue/red (not label-flip augmentation).** An earlier
+   version of this spec proposed doubling the data by mirroring every example with blue/red
+   swapped and the label flipped. That's wrong: blue side has a real, structural ~55% win rate
+   in this data (first/last pick priority, jungle pathing, river-bush vision — not caused by
+   which champions are drafted). Flipping the label on a mirrored copy asserts the opposite —
+   that the same champions would reverse the outcome on the other side — and doing this for
+   every game forces the augmented dataset's blue-win rate to exactly 50%, erasing the real
+   ~5-point edge the model should be learning. Instead, the data-efficiency goal (every
+   occurrence of a champion teaches the model something, not just the ones that landed in the
+   blue slot) is met by giving each champion a single shared embedding used in both the blue-
+   and red-side feature blocks, with no fabricated examples or label flipping. The real side
+   asymmetry is preserved untouched in the training labels.
 3. **Champion embeddings instead of one-hot presence.** `features.py`'s current encoding is a
    4-channel one-hot over every champion — mostly empty space for ~1,400 games, a classic
    high-dimensional/low-data setup that invites memorization over generalization. Replace with
@@ -113,7 +121,7 @@ TDD per `CONVENTIONS.md`, mirroring the existing test layout:
 - New source parsers: `backend/tests/pipeline/test_<source>.py`, hand-written synthetic
   fixtures mimicking each source's real format (fake CSV rows / fake Cargo API JSON / fake
   Riot API JSON) — never real downloaded or scraped data as a fixture.
-- New model logic (matchup smoothing, augmentation, embedding encoding, prefix weighting):
+- New model logic (matchup smoothing, shared embedding encoding, prefix weighting):
   `backend/tests/model/`, mirroring `app/model/`.
 - One end-to-end check: `train_model()` runs on a small fabricated multi-source dataset without
   crashing and produces a normal `TrainingReport`.
