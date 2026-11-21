@@ -288,3 +288,22 @@ def test_train_model_prints_progress_when_verbose(
     assert "device" in output.lower()
     assert "epoch 1" in output.lower()
     assert "epoch 5" in output.lower()
+
+
+def test_prefix_examples_weight_scales_with_locked_in_actions(make_game: Any) -> None:
+    game = _planted_game(make_game, 0, True)
+
+    examples = _prefix_examples([game])
+
+    weights_by_prefix_length = {len(example.state.actions): example.weight for example in examples}
+    assert weights_by_prefix_length[0] == 0.0
+    assert weights_by_prefix_length[len(DRAFT_ORDER)] == 1.0
+    assert weights_by_prefix_length[10] == 10 / len(DRAFT_ORDER)
+
+
+def test_train_model_uses_weighted_loss_without_crashing(make_game: Any, tmp_path: Path) -> None:
+    games = [_planted_game(make_game, index, index % 2 == 0) for index in range(24)]
+
+    report = train_model(games, tmp_path, epochs=3, hidden_size=8, seed=17, device="cpu")
+
+    assert report.metrics["model"]["auc"] is not None

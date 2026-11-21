@@ -30,6 +30,7 @@ class _PrefixExample:
     game: GameDraft
     state: DraftState
     label: float
+    weight: float
 
 
 class TrainingReport(BaseModel):
@@ -112,6 +113,7 @@ def _prefix_examples(games: list[GameDraft]) -> list[_PrefixExample]:
                         actions=action_ids[:prefix_length],
                     ),
                     label=label,
+                    weight=prefix_length / len(DRAFT_ORDER),
                 )
             )
     return examples
@@ -302,8 +304,10 @@ def train_model(
     feature_space = FeatureSpace.fit(fit_games, ddragon)
     train_encoded = _out_of_fold_features(train_examples, fit_games, ddragon)
     train_labels = [example.label for example in train_examples]
+    train_weights = [example.weight for example in train_examples]
     stopping_encoded = [feature_space.encode(example.state) for example in stopping_examples]
     stopping_labels = [example.label for example in stopping_examples]
+    stopping_weights = [example.weight for example in stopping_examples]
     validation_encoded = [feature_space.encode(example.state) for example in validation_examples]
     validation_labels = [example.label for example in validation_examples]
 
@@ -329,9 +333,13 @@ def train_model(
         _stack_encoded(torch, train_encoded, target_device)
     )
     labels_tensor = torch.tensor(train_labels, dtype=torch.float32, device=target_device)
+    weights_tensor = torch.tensor(train_weights, dtype=torch.float32, device=target_device)
     stopping_tensors = _stack_encoded(torch, stopping_encoded, target_device)
     stopping_labels_tensor = torch.tensor(
         stopping_labels, dtype=torch.float32, device=target_device
+    )
+    stopping_weights_tensor = torch.tensor(
+        stopping_weights, dtype=torch.float32, device=target_device
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     best_loss = float("inf")
@@ -353,9 +361,11 @@ def train_model(
                 red_bans_tensor[batch_indices],
                 continuous_tensor[batch_indices],
             )
-            loss = torch.nn.functional.binary_cross_entropy(
-                probabilities, labels_tensor[batch_indices]
+            batch_weights = weights_tensor[batch_indices]
+            per_example_loss = torch.nn.functional.binary_cross_entropy(
+                probabilities, labels_tensor[batch_indices], reduction="none"
             )
+            loss = (per_example_loss * batch_weights).sum() / batch_weights.sum().clamp_min(1e-8)
             loss.backward()
             optimizer.step()
             epoch_loss_total += float(loss.detach()) * batch_indices.shape[0]
@@ -366,10 +376,13 @@ def train_model(
             continue
         model.eval()
         with torch.inference_mode():
+            stopping_probabilities = model(*stopping_tensors)
+            stopping_per_example_loss = torch.nn.functional.binary_cross_entropy(
+                stopping_probabilities, stopping_labels_tensor, reduction="none"
+            )
             stopping_loss = float(
-                torch.nn.functional.binary_cross_entropy(
-                    model(*stopping_tensors), stopping_labels_tensor
-                )
+                (stopping_per_example_loss * stopping_weights_tensor).sum()
+                / stopping_weights_tensor.sum().clamp_min(1e-8)
             )
         recent_stopping_losses.append(stopping_loss)
         smoothed_stopping_loss = sum(recent_stopping_losses) / len(recent_stopping_losses)
