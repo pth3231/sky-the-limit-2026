@@ -45,18 +45,18 @@ export function tooltipContent(
 ): { headline: string; body: string } {
   const headline =
     action === "pick"
-      ? `Projected win chance with pick: ${percent(candidate.score)}`
-      : `Ban candidate score: ${candidate.score.toFixed(2)}`;
+      ? `${percent(candidate.score)} win chance`
+      : `Ban score ${candidate.score.toFixed(2)}`;
   const factors = [...candidate.contributingFactors]
     .sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact))
-    .slice(0, 2)
+    .slice(0, 1)
     .map((factor) => factor.label);
   const verdict =
     state === "discouraged"
-      ? `${candidate.championName} looks like a weak ${action} here`
-      : state === "recommended" && action === "pick"
-        ? `${candidate.championName} looks like a strong ${action} here`
-        : `${candidate.championName} is a suggested ${action}`;
-  const template = factors.length ? `${verdict}: ${factors.join("; ")}.` : `${verdict}.`;
+      ? `Weak ${action}`
+      : state === "recommended"
+        ? `Strong ${action}`
+        : `Suggested ${action}`;
+  const template = factors.length ? `${verdict}: ${factors[0]}.` : `${verdict}.`;
   return { headline, body: candidate.reason.trim() || template };
 }

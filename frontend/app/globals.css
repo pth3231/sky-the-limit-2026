@@ -715,6 +715,15 @@ body {
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
+/* Draft title - subtle, not overpowering */
+.draft-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
 .action-label {
   margin: 0;
   font-size: 18px;
@@ -936,6 +945,14 @@ body {
 }
 .draft-bar-team {
   display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.draft-bar-team .team-info {
+  display: flex;
   flex-direction: column;
   gap: 4px;
   flex: 1;
@@ -954,6 +971,38 @@ body {
   letter-spacing: 0.1em;
   color: var(--muted);
   text-transform: uppercase;
+}
+
+/* Team logo placeholder */
+.team-logo-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--raised);
+  border: 2px solid var(--gold);
+  flex-shrink: 0;
+  margin-bottom: 4px;
+}
+.team-logo-initials {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--gold);
+  letter-spacing: 0.05em;
+}
+
+/* Win rate empty state chart */
+.win-rate-empty-state {
+  width: 100%;
+}
+.win-rate-empty-chart {
+  width: 100%;
+}
+.win-rate-empty-chart svg {
+  width: 100%;
+  height: auto;
 }
 .draft-bar-slots {
   display: flex;
@@ -981,6 +1030,10 @@ body {
   opacity: 0.7;
 }
 .draft-slot-active {
+  border-color: var(--gold);
+  border-width: 2px;
+}
+.draft-slot-active .draft-slot-portrait {
   border-color: var(--gold);
 }
 .draft-slot-portrait {

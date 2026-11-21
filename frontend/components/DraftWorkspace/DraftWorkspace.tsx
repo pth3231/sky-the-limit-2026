@@ -147,7 +147,7 @@ export function DraftWorkspace({
     <main ref={workspaceRef} className="workspace">
       {/* Header with title */}
       <header className="draft-header">
-        <h1 className="action-label">Draft Recommendation</h1>
+        <h1 className="draft-title">Draft Recommendation</h1>
         {!seriesDecided && !complete && currentSlot && (
           <p className="active-team">
             {actionLabel} · {activeTeam}

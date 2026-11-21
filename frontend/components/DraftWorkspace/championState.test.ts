@@ -37,23 +37,24 @@ describe("tileState", () => {
 });
 
 describe("tooltipContent", () => {
-  it("builds a template from the top factors when no reason exists", () => {
+  it("builds a concise template from the top factor when no reason exists", () => {
     const { headline, body } = tooltipContent(
       candidate(0.62, "  ", ["small", "big", "mid"]),
       "recommended",
       "pick",
     );
     expect(headline).toContain("62%");
-    expect(body).toBe("Alpha looks like a strong pick here: mid; big.");
+    expect(headline).toContain("win chance");
+    expect(body).toBe("Strong pick: mid.");
   });
   it("replaces the template with the server reason", () => {
     expect(tooltipContent(candidate(0.4, "AI says no"), "discouraged", "pick").body).toBe(
       "AI says no",
     );
   });
-  it("does not call a ban score a win rate", () => {
+  it("shows a short ban score headline", () => {
     expect(tooltipContent(candidate(0.62), "recommended", "ban").headline).toBe(
-      "Ban candidate score: 0.62",
+      "Ban score 0.62",
     );
   });
   it("does not call a neutral candidate strong", () => {

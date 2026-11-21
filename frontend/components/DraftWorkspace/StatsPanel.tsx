@@ -29,7 +29,28 @@ export function StatsPanel({
         {winRateHistory.length > 0 ? (
           <WinRateChart history={winRateHistory} />
         ) : (
-          <p className="empty-message">Win rate will appear after picks are made.</p>
+          <div className="win-rate-empty-state">
+            <div className="win-rate-empty-chart" aria-label="Win rate trend - no data yet">
+              <svg viewBox="0 0 400 200" role="img">
+                {/* Grid lines */}
+                {[25, 50, 75, 100].map((val) => {
+                  const y = 20 + (1 - val / 100) * 140;
+                  return (
+                    <g key={val}>
+                      <line x1="50" y1={y} x2="380" y2={y} stroke="var(--line)" strokeWidth="1" strokeDasharray="4,4" />
+                      <text x="42" y={y + 4} textAnchor="end" fill="var(--muted)" fontSize="11" fontFamily="Consolas, monospace">{val}%</text>
+                    </g>
+                  );
+                })}
+                {/* Placeholder line */}
+                <line x1="50" y1="90" x2="380" y2="90" stroke="var(--cloud9)" strokeWidth="2" strokeDasharray="8,4" opacity="0.3" />
+                {/* Placeholder text */}
+                <text x="215" y="105" textAnchor="middle" fill="var(--muted)" fontSize="13" fontFamily="Arial, sans-serif">Win rate will appear after picks are made</text>
+                {/* X-axis label */}
+                <text x="215" y="180" textAnchor="middle" fill="var(--muted)" fontSize="11" fontFamily="Arial, sans-serif">Pick number</text>
+              </svg>
+            </div>
+          </div>
         )}
       </div>
 

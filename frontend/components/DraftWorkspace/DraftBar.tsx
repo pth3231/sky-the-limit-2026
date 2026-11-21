@@ -66,8 +66,12 @@ export function DraftBar({
       <div className="draft-bar-main" role="region" aria-label="Draft status">
         {/* Our team - left side */}
         <div className="draft-bar-team draft-bar-ours">
-          <span className="team-label">{ourTeam}</span>
-          <div className="draft-bar-slots">
+          <div className="team-logo-placeholder" aria-label={`${ourTeam} logo`}>
+            <span className="team-logo-initials">{ourTeam.slice(0, 2).toUpperCase()}</span>
+          </div>
+          <div className="team-info">
+            <span className="team-label">{ourTeam}</span>
+            <div className="draft-bar-slots">
             {/* Bans */}
             {ourSlots.filter((s) => s.action === "ban").map((slot, i) => (
               <DraftSlot
@@ -94,6 +98,7 @@ export function DraftBar({
                 isBan={false}
               />
             ))}
+            </div>
           </div>
         </div>
 
@@ -104,8 +109,12 @@ export function DraftBar({
 
         {/* Opponent team - right side */}
         <div className="draft-bar-team draft-bar-theirs">
-          <span className="team-label">{opponentTeam}</span>
-          <div className="draft-bar-slots">
+          <div className="team-logo-placeholder" aria-label={`${opponentTeam} logo`}>
+            <span className="team-logo-initials">{opponentTeam.slice(0, 2).toUpperCase()}</span>
+          </div>
+          <div className="team-info">
+            <span className="team-label">{opponentTeam}</span>
+            <div className="draft-bar-slots">
             {/* Bans */}
             {theirSlots.filter((s) => s.action === "ban").map((slot, i) => (
               <DraftSlot
@@ -132,6 +141,7 @@ export function DraftBar({
                 isBan={false}
               />
             ))}
+            </div>
           </div>
         </div>
       </div>
