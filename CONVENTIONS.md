@@ -33,11 +33,18 @@ Every branch traces back to an issue — see Issues below.
 - One PR per issue.
 - PR title: Conventional Commits format, same as commit messages — it
   becomes the final commit message on `main` via squash merge.
-- Description must include `Closes #<issue-number>`.
+- **Auto-close the related issue:** The PR description **must** include
+  `Closes #<issue-number>` on its own line so GitHub automatically closes
+  the issue when the PR is merged. Additionally, add a `Closes: #<N>`
+  trailer to the commit message (e.g. `git commit --trailer "Closes: #9"`)
+  so the link is preserved in history even if the PR body is lost.
 - Merge strategy: **squash merge only**. Keeps `main` linear, one commit
   per PR.
 - No required reviewer (solo project) — merge once the PR is ready and any
   checks pass.
+- **Before merging:** Verify the `Closes #<N>` keyword is present in the PR
+  body. If the PR addresses multiple issues, list each one (e.g.
+  `Closes #9, #10`).
 
 ## What gets committed
 
