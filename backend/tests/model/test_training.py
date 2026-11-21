@@ -205,3 +205,24 @@ def test_training_learns_planted_winning_champion_and_loads_batch_predictor(
     assert 1 <= report.best_epoch <= 50
     assert report.metrics["model"]["auc"] is not None
     assert (tmp_path / "model_metrics.json").is_file()
+
+
+def test_train_model_is_silent_by_default(make_game: Any, tmp_path: Path, capsys: Any) -> None:
+    games = [_planted_game(make_game, index, index % 2 == 0) for index in range(24)]
+
+    train_model(games, tmp_path, epochs=5, hidden_size=8, seed=17, device="cpu")
+
+    assert capsys.readouterr().out == ""
+
+
+def test_train_model_prints_progress_when_verbose(
+    make_game: Any, tmp_path: Path, capsys: Any
+) -> None:
+    games = [_planted_game(make_game, index, index % 2 == 0) for index in range(24)]
+
+    train_model(games, tmp_path, epochs=5, hidden_size=8, seed=17, device="cpu", verbose=True)
+
+    output = capsys.readouterr().out
+    assert "device" in output.lower()
+    assert "epoch 1" in output.lower()
+    assert "epoch 5" in output.lower()

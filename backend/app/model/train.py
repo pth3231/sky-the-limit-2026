@@ -254,6 +254,7 @@ def train_model(
     seed: int = 42,
     device: str = "auto",
     ddragon: dict[str, Any] | None = None,
+    verbose: bool = False,
 ) -> TrainingReport:
     """Train on decided games, validate on the newest time window, and save local artifacts.
 
@@ -287,6 +288,13 @@ def train_model(
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     target_device = _resolve_device(torch, device)
+    if verbose:
+        print(
+            f"Training on device={target_device}: {len(fit_games)} fit games "
+            f"({len(train_examples)} examples), {len(stopping_games)} stopping games, "
+            f"{len(validation_games)} validation games, up to {epochs} epochs, "
+            f"patience={patience}"
+        )
     model = DraftNet(input_size, hidden_size=hidden_size, dropout=dropout).to(target_device)
     features_tensor = torch.tensor(train_features, dtype=torch.float32, device=target_device)
     labels_tensor = torch.tensor(train_labels, dtype=torch.float32, device=target_device)
@@ -305,7 +313,10 @@ def train_model(
         loss = torch.nn.functional.binary_cross_entropy(probabilities, labels_tensor)
         loss.backward()
         optimizer.step()
+        train_loss = float(loss.detach())
         if not stopping_features:
+            if verbose:
+                print(f"Epoch {epoch}/{epochs}: train_loss={train_loss:.4f}")
             continue
         model.eval()
         with torch.inference_mode():
@@ -314,16 +325,27 @@ def train_model(
                     model(stopping_tensor), stopping_labels_tensor
                 )
             )
-        if stopping_loss < best_loss:
+        is_best = stopping_loss < best_loss
+        if is_best:
             best_loss = stopping_loss
             best_epoch = epoch
             best_state = {
                 name: value.detach().clone() for name, value in model.state_dict().items()
             }
-        elif epoch - best_epoch >= patience:
+        if verbose:
+            marker = " (best)" if is_best else ""
+            print(
+                f"Epoch {epoch}/{epochs}: train_loss={train_loss:.4f} "
+                f"stopping_loss={stopping_loss:.4f}{marker}"
+            )
+        if not is_best and epoch - best_epoch >= patience:
+            if verbose:
+                print(f"Stopped early at epoch {epoch} (best epoch {best_epoch})")
             break
     if best_state is not None:
         model.load_state_dict(best_state)
+    if verbose:
+        print(f"Training finished: best epoch {best_epoch}, best stopping_loss={best_loss:.4f}")
 
     model.eval()
     if validation_features:
@@ -411,6 +433,7 @@ def main(argv: list[str] | None = None) -> None:
         seed=arguments.seed,
         device=arguments.device,
         ddragon=_read_traits(ddragon_path),
+        verbose=True,
     )
     print(json.dumps(report.model_dump(mode="json"), indent=2))
 
