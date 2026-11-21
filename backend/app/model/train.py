@@ -274,6 +274,7 @@ def train_model(
     epochs: int = 100,
     hidden_size: int = 32,
     dropout: float = 0.5,
+    embedding_dim: int = 16,
     learning_rate: float = 0.001,
     weight_decay: float = 1e-2,
     batch_size: int = 256,
@@ -326,6 +327,7 @@ def train_model(
     model = DraftNet(
         feature_space.num_champions,
         feature_space.continuous_size,
+        embedding_dim=embedding_dim,
         hidden_size=hidden_size,
         dropout=dropout,
     ).to(target_device)
@@ -445,7 +447,7 @@ def train_model(
             "state_dict": model.cpu().state_dict(),
             "num_champions": feature_space.num_champions,
             "continuous_size": feature_space.continuous_size,
-            "embedding_dim": 16,
+            "embedding_dim": embedding_dim,
             "hidden_size": hidden_size,
             "dropout": dropout,
             "feature_space": feature_space.model_dump(mode="json"),
