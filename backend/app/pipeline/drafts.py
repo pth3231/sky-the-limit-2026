@@ -1,9 +1,9 @@
 """Streaming extraction of structured draft actions from GRID series feeds."""
 
-import json
 from pathlib import Path
 from typing import Any, Literal
 
+import orjson
 import zstandard
 from pydantic import BaseModel, ConfigDict
 
@@ -59,7 +59,7 @@ def read_final_series_state(path: Path) -> dict[str, Any]:
     last_state: Any = None
     with zstandard.open(path, "rt", encoding="utf-8") as feed:
         for line in feed:
-            envelope = json.loads(line)
+            envelope = orjson.loads(line)
             for event in envelope.get("events", []):
                 state = event.get("seriesState")
                 if state is not None:
@@ -75,7 +75,7 @@ def extract_game_drafts(series_state: dict[str, Any]) -> dict[str, list[DraftAct
     drafts: dict[str, list[DraftAction]] = {}
     for game in series_state.get("games", []):
         actions = [
-            DraftAction(
+            DraftAction.model_construct(
                 sequence_number=action["sequenceNumber"],
                 action_type=action["type"],
                 team_id=action["drafter"]["id"],
@@ -124,7 +124,7 @@ def extract_game_lineups(series_state: dict[str, Any]) -> dict[str, list[PlayerL
                     player.get("killAssistsGiven")
                 )
                 team_lines.append(
-                    PlayerLine(
+                    PlayerLine.model_construct(
                         team_id=team_id,
                         role=role,
                         champion_id=champion_id,
