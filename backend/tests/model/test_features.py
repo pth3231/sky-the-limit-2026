@@ -1,6 +1,8 @@
 from typing import Any
 
+from app.engine.draft_order import DRAFT_ORDER
 from app.model.features import DraftState, FeatureSpace
+from app.pipeline.dataset import GameDraft
 from app.pipeline.ddragon import ChampionTraits
 from app.pipeline.drafts import PlayerLine
 
@@ -40,11 +42,9 @@ def test_feature_space_fits_only_training_games_and_encodes_blue_orientation(
         actions=["c3", "c4", "c3", "c4", "c3", "c4", "c1"],
     )
     encoded = space.encode(state)
-    champion_count = len(space.champion_ids)
-    channel = {("blue", "pick"): 0, ("blue", "ban"): 1, ("red", "pick"): 2, ("red", "ban"): 3}
-
-    def presence_index(side: str, action: str, champion_id: str) -> int:
-        return channel[(side, action)] * champion_count + space.champion_ids.index(champion_id)
+    c1_index = space.champion_ids.index("c1")
+    c3_index = space.champion_ids.index("c3")
+    c4_index = space.champion_ids.index("c4")
 
     assert set(space.champion_ids) == {"c1", "c2", "c3", "c4"}
     assert "heldout-champion" not in space.champion_ids
@@ -53,10 +53,11 @@ def test_feature_space_fits_only_training_games_and_encodes_blue_orientation(
     assert space.role_profiles["c1"]["top"].win_rate == 1
     assert space.role_profiles["c1"]["top"].damage_share == 0.2
     assert space.champion_traits["c1"].tags == ("Fighter",)
-    assert encoded[presence_index("blue", "pick", "c1")] == 1
-    assert encoded[presence_index("red", "pick", "c1")] == 0
-    assert encoded[presence_index("blue", "ban", "c3")] == 1
-    assert encoded[presence_index("red", "ban", "c4")] == 1
+    # Check slot arrays for the encoded state
+    assert c1_index in encoded.blue_picks
+    assert c1_index not in encoded.red_picks
+    assert c3_index in encoded.blue_bans
+    assert c4_index in encoded.red_bans
     restored = FeatureSpace.model_validate_json(space.model_dump_json())
     assert restored.model_dump() == space.model_dump()
 
@@ -85,10 +86,15 @@ def test_feature_space_keeps_unknown_patch_and_champion_dimensions_stable(
     known = space.encode(DraftState(patch="16.1", actions=[]))
     unknown = space.encode(DraftState(patch="unknown", actions=["unseen-champion"]))
 
-    assert len(known) == len(unknown)
-    patch_offset = 4 * len(space.champion_ids) + 21
-    assert known[patch_offset] == 1
-    assert unknown[patch_offset + len(space.patches)] == 1
+    assert len(known.continuous) == len(unknown.continuous)
+    # Verify that continuous features have stable dimensions regardless of patch/champion visibility
+    action_count_size = len(DRAFT_ORDER) + 1
+    # Patch features use len(patches) + 1 (the +1 is for unknown patch)
+    patch_features_offset = action_count_size
+    # For known patch "16.1", it should be in the known patches
+    assert known.continuous[patch_features_offset] == 1.0
+    # For unknown patch, it should be in the unknown patch slot (at the end)
+    assert unknown.continuous[patch_features_offset + len(space.patches)] == 1.0
 
 
 def test_feature_space_keeps_vocabulary_fixed_while_history_changes(make_game: Any) -> None:
@@ -128,8 +134,62 @@ def test_feature_space_keeps_vocabulary_fixed_while_history_changes(make_game: A
     assert first_space.champion_ids == second_space.champion_ids == ["c1", "c2"]
     assert first_space.patches == second_space.patches == ["16.1", "16.2"]
     assert first_space.tag_names == second_space.tag_names == ["Fighter", "Mage"]
-    assert first_space.input_size == second_space.input_size
+    assert first_space.continuous_size == second_space.continuous_size
     assert first_space.champion_roles == {"c1": "mid"}
     assert second_space.champion_roles == {"c2": "bot"}
     assert first_space.role_profiles["c1"]["mid"].damage_share == 0.2
     assert second_space.role_profiles["c2"]["bot"].damage_share == 0.8
+
+
+def test_encode_returns_sentinel_padded_slot_arrays_for_empty_state(
+    synthetic_drafts: list[GameDraft],
+) -> None:
+    feature_space = FeatureSpace.fit(synthetic_drafts)
+    sentinel = feature_space.num_champions
+
+    encoded = feature_space.encode(DraftState())
+
+    assert encoded.blue_picks == [sentinel] * 5
+    assert encoded.blue_bans == [sentinel] * 5
+    assert encoded.red_picks == [sentinel] * 5
+    assert encoded.red_bans == [sentinel] * 5
+
+
+def test_encode_places_champion_indices_in_the_matching_slot_group(
+    synthetic_drafts: list[GameDraft],
+) -> None:
+    feature_space = FeatureSpace.fit(synthetic_drafts)
+
+    # Construct a state with specific champions at known DRAFT_ORDER positions
+    # DRAFT_ORDER positions:
+    # 0: ban, blue
+    # 1: ban, red
+    # 2-5: more bans
+    # 6: pick, blue -> c0
+    # 7: pick, red -> c2
+    # 8: pick, red -> c3
+    # 9: pick, blue -> c1
+    # 10+: remaining picks and bans
+
+    # Build state.actions with sentinels (we use a placeholder string) for missing slots,
+    # then fill in the ones we care about
+    state = DraftState(
+        patch="16.1",
+        actions=["", "", "", "", "", "", "c0", "c2", "c3", "c1"],
+    )
+
+    encoded = feature_space.encode(state)
+
+    champion_index = {
+        champion_id: index for index, champion_id in enumerate(feature_space.champion_ids)
+    }
+
+    # Verify that the picks end up in the right slot groups
+    assert champion_index["c0"] in encoded.blue_picks
+    assert champion_index["c1"] in encoded.blue_picks
+    assert champion_index["c2"] in encoded.red_picks
+    assert champion_index["c3"] in encoded.red_picks
+
+    # Verify slot array lengths
+    assert len(encoded.blue_picks) == 5
+    assert len(encoded.red_picks) == 5
