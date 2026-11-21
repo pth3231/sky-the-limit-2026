@@ -114,3 +114,93 @@ def test_joins_known_games_and_skips_unknown_or_undrafted_games(
     assert drafts[0].actions[0].champion_id == "champ-1"
     assert len(drafts[0].lineups) == 5
     assert drafts[0].lineups[0].role is None
+
+
+def test_build_game_drafts_is_silent_by_default(
+    tmp_path: Path,
+    write_zstd_feed: Any,
+    capsys: Any,
+) -> None:
+    _write_csv(
+        tmp_path / "meta" / "games.csv",
+        [
+            {
+                "title": "lol",
+                "series_id": "series-1",
+                "game_id": "game-known",
+                "game_number": "1",
+                "patch": "15.10",
+                "started_at": "2026-10-10T12:00:00Z",
+                "finished": "true",
+                "winner_team_id": "team-blue",
+                "team1_id": "team-blue",
+                "team1_side": "blue",
+                "team2_id": "team-red",
+                "team2_side": "red",
+            },
+        ],
+    )
+    _write_csv(
+        tmp_path / "lol" / "series.csv",
+        [{"series_id": "series-1", "file": "lol/events_series-1_grid.jsonl.zst"}],
+    )
+    write_zstd_feed(
+        "lol/events_series-1_grid.jsonl.zst",
+        [{"events": [{"seriesState": {"games": [{"id": "game-known", "draftActions": []}]}}]}],
+    )
+
+    build_game_drafts(tmp_path)
+
+    assert capsys.readouterr().out == ""
+
+
+def test_build_game_drafts_prints_progress_with_eta_when_verbose(
+    tmp_path: Path,
+    write_zstd_feed: Any,
+    capsys: Any,
+) -> None:
+    _write_csv(
+        tmp_path / "meta" / "games.csv",
+        [
+            {
+                "title": "lol",
+                "series_id": f"series-{index}",
+                "game_id": f"game-{index}",
+                "game_number": "1",
+                "patch": "15.10",
+                "started_at": "2026-10-10T12:00:00Z",
+                "finished": "true",
+                "winner_team_id": "team-blue",
+                "team1_id": "team-blue",
+                "team1_side": "blue",
+                "team2_id": "team-red",
+                "team2_side": "red",
+            }
+            for index in range(2)
+        ],
+    )
+    _write_csv(
+        tmp_path / "lol" / "series.csv",
+        [
+            {"series_id": f"series-{index}", "file": f"lol/events_series-{index}_grid.jsonl.zst"}
+            for index in range(2)
+        ],
+    )
+    for index in range(2):
+        write_zstd_feed(
+            f"lol/events_series-{index}_grid.jsonl.zst",
+            [
+                {
+                    "events": [
+                        {"seriesState": {"games": [{"id": f"game-{index}", "draftActions": []}]}}
+                    ]
+                }
+            ],
+        )
+
+    build_game_drafts(tmp_path, verbose=True)
+
+    output = capsys.readouterr().out
+    assert "series 1/2" in output.lower()
+    assert "series 2/2" in output.lower()
+    assert "eta" in output.lower()

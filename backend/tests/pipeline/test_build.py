@@ -94,7 +94,7 @@ def test_configured_derived_dir_is_the_default_output(tmp_path: Path, monkeypatc
     monkeypatch.setattr(
         build_module,
         "build_outputs",
-        lambda source, destination, *, include_ddragon=True: (
+        lambda source, destination, *, include_ddragon=True, verbose=False: (
             calls.append((source, destination, include_ddragon)) or ([], {})
         ),
     )
