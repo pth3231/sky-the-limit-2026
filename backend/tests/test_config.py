@@ -85,6 +85,18 @@ def test_derived_settings_loads_dotenv_without_grid_data(tmp_path: Path) -> None
     assert derived_settings_type(_env_file=env_file).derived_dir == output_dir
 
 
+def test_derived_settings_ignores_stl_data_dir_in_shared_dotenv(tmp_path: Path) -> None:
+    output_dir = tmp_path / "derived"
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        f"STL_DATA_DIR=../stl-hackathon-2026-grid-starter\nDRAFT_COACH_DERIVED_DIR={output_dir}\n",
+        encoding="utf-8",
+    )
+
+    derived_settings_type = cast(Any, DerivedSettings)
+    assert derived_settings_type(_env_file=env_file).derived_dir == output_dir
+
+
 def test_default_data_lookup_uses_only_the_sibling_dataset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
