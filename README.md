@@ -45,12 +45,12 @@ queue) or Leaguepedia data, shown as a separate "current meta" badge.
 | Path | What it is |
 | --- | --- |
 | [PRODUCT.md](PRODUCT.md) | Durable product truth: users, purpose, positioning, capabilities, principles. |
-| [DESIGN.md](DESIGN.md) | Visual design system (seed; direction: "Broadcast Sequence Bar"). Colors/fonts resolved during implementation. |
+| [DESIGN.md](DESIGN.md) | Visual design system with resolved colors, fonts, and layout rules. |
 | [docs/superpowers/specs/](docs/superpowers/specs/) | Approved design spec(s): architecture, data pipeline, GA+NN engine, Fearless flow, UI, testing. |
 | [CONVENTIONS.md](CONVENTIONS.md) | Commit, branch, issue, PR, and coding conventions (Python + TypeScript). |
 | [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | Rules for AI coding agents — most importantly, GRID data handling. |
-| `backend/` | Python / FastAPI (`uv`, Ruff, Pyright, Pydantic v2): data pipeline and draft API (built); NN training + inference (PyTorch) and GA (planned). |
-| `frontend/` *(planned)* | Next.js + TypeScript strict (Tailwind, Zustand, Vitest, Playwright): draft board, champion grid, win-rate meter, insights panel. |
+| `backend/` | Python / FastAPI (`uv`, Ruff, Pyright, Pydantic v2): data pipeline, draft API, NN training + inference (PyTorch with GPU acceleration), GA, chain recommendations, and roster endpoint. |
+| `frontend/` | Next.js + TypeScript strict (Tailwind, Zustand, Vitest): draft workspace with champion selector, stats panel with win-rate chart, and draft bar with team bans/picks. |
 
 # Working with the data
 
@@ -113,16 +113,20 @@ linters, formatters, and type checkers per stack are listed in
 
 # Roadmap
 
-Implementation plans are written per subsystem (`docs/superpowers/plans/`)
-in this order:
+All core items are complete. Implementation plans are archived in
+`docs/superpowers/plans/`:
 
-1. **Data pipeline** — `meta/*.csv` + GRID feeds → patch-bucketed
+1. ✅ **Data pipeline** — `meta/*.csv` + GRID feeds → patch-bucketed
    aggregates + `draftActions` extraction.
-2. **Backend core** — FastAPI API, Fearless draft state machine,
+2. ✅ **Backend core** — FastAPI API, Fearless draft state machine,
    statistical-blend "why" scorer.
-3. **Recommendation engine** — PyTorch NN fitness function + next-move GA.
-4. **Frontend draft board** — Next.js + TS strict, implementing the
+3. ✅ **Recommendation engine** — PyTorch NN fitness function + next-move GA,
+   chain recommendations, GPU acceleration.
+4. ✅ **Frontend draft workspace** — Next.js + TS strict, implementing the
    DESIGN.md direction; TS API types generated from FastAPI's OpenAPI.
+
+Stretch goal (optional): external data integration via Riot API or
+Leaguepedia for live meta stats beyond the GRID dataset's October 2026 cutoff.
 
 # License
 
