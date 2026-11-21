@@ -7,6 +7,7 @@ from app.engine.scoring import Scorer, series_win_probability, signal_for, smoot
 from app.engine.stats import blend_patches
 from app.pipeline.aggregates import compute_aggregates
 from app.pipeline.dataset import GameDraft
+from app.pipeline.drafts import PlayerLine, Role
 
 NAMES = {"A": "Ahri", "W": "Weakling", "L": "Lee Sin", "O": "Orianna", "N": "Nami", "R": "Rare"}
 
@@ -37,7 +38,53 @@ def scorer(make_game: Callable[..., GameDraft]) -> Scorer:
         opponent_team_id="opp",
         opponent_team_name="Rivals",
         our_side="blue",
+        champion_roles={},
     )
+
+
+@pytest.fixture
+def matchup_scorer(make_game: Callable[..., GameDraft]) -> Scorer:
+    def lineup(team: str, role: Role, champion: str) -> PlayerLine:
+        return PlayerLine(team_id=team, role=role, champion_id=champion)
+
+    def game(winner: str) -> GameDraft:
+        return make_game(
+            blue="c9", red="opp", winner=winner, blue_picks=["A"], red_picks=["X"]
+        ).model_copy(update={"lineups": [lineup("c9", "top", "A"), lineup("opp", "top", "X")]})
+
+    games = [game("blue") for _ in range(8)] + [game("red") for _ in range(2)]
+    stats = blend_patches(compute_aggregates(games), None, min_games=1)
+    return Scorer(
+        stats,
+        champion_names={"A": "Ahri", "X": "Xin Zhao"},
+        our_team_id="c9",
+        our_team_name="Cloud9",
+        opponent_team_id="opp",
+        opponent_team_name="Rivals",
+        our_side="blue",
+        champion_roles={"A": "top", "X": "top"},
+    )
+
+
+def test_matchup_factor_appears_when_opponent_has_same_role_pick(matchup_scorer: Scorer) -> None:
+    candidate = matchup_scorer.score_pick("A", our_picks=(), opponent_picks=("X",))
+
+    labels = [factor.label for factor in candidate.contributing_factors]
+    assert any("beats their Xin Zhao" in label for label in labels)
+
+
+def test_matchup_factor_absent_without_a_same_role_opposing_pick(matchup_scorer: Scorer) -> None:
+    candidate = matchup_scorer.score_pick("A", our_picks=(), opponent_picks=())
+
+    labels = [factor.label for factor in candidate.contributing_factors]
+    assert not any("lane matchup" in label.lower() for label in labels)
+
+
+def test_ban_candidate_surfaces_matchup_threat_against_our_pick(matchup_scorer: Scorer) -> None:
+    candidate = matchup_scorer.score_ban("X", our_picks=("A",), opponent_picks=())
+
+    labels = [factor.label for factor in candidate.contributing_factors]
+    assert any("loses to your Ahri" in label for label in labels)
 
 
 def test_smoothed_rate_pulls_small_samples_toward_even() -> None:
@@ -136,6 +183,7 @@ def test_stacked_signals_stay_believable(make_game: Callable[..., GameDraft]) ->
         opponent_team_id="opp",
         opponent_team_name="Rivals",
         our_side="blue",
+        champion_roles={},
     )
 
     assert 0.7 < scorer.game_win_probability(lineup, ()) < 0.85
@@ -153,6 +201,7 @@ def test_side_factor_reports_no_decided_game_evidence(
         opponent_team_id="opp",
         opponent_team_name="Rivals",
         our_side="blue",
+        champion_roles={},
     )
 
     assert scorer.composition_factors((), ())[0].label == "No decided pro games on these patches"

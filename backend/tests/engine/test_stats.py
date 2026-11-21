@@ -66,6 +66,12 @@ def test_sums_counts_across_blended_patches(aggregates: dict[str, PatchAggregate
     assert stats.pair("A", "missing") is None
 
 
+def test_sums_matchup_counts_across_blended_patches(aggregates: dict[str, PatchAggregate]) -> None:
+    stats = blend_patches(aggregates, None, min_games=6)
+
+    assert stats.matchup("top", "missing", "missing") is None
+
+
 def test_unknown_or_missing_patch_raises(aggregates: dict[str, PatchAggregate]) -> None:
     with pytest.raises(UnknownPatchError, match="15.1"):
         blend_patches(aggregates, "15.1")
