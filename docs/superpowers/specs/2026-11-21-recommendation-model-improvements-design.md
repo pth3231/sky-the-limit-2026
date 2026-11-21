@@ -35,7 +35,7 @@ before its stopping-set loss started getting worse.
 
 ## Milestone 1 — fix the model on existing GRID data
 
-No new data sources yet, so any AUC movement here is attributable only to these four
+No new data sources yet, so any AUC movement here is attributable only to these three
 changes. Each is retrained and measured independently (ablation: toggle one at a time) before
 they're combined, so the PR can report which change did what.
 
@@ -46,26 +46,23 @@ they're combined, so the PR can report which change did what.
    games), and a parallel feature block in `features.py` for the NN. Surfaced in the
    plain-language "why" the same way existing ours/theirs factors are, per Product Principle
    2 (every recommendation shows its why).
-2. **Shared champion embeddings across blue/red (not label-flip augmentation).** An earlier
-   version of this spec proposed doubling the data by mirroring every example with blue/red
-   swapped and the label flipped. That's wrong: blue side has a real, structural ~55% win rate
-   in this data (first/last pick priority, jungle pathing, river-bush vision — not caused by
-   which champions are drafted). Flipping the label on a mirrored copy asserts the opposite —
-   that the same champions would reverse the outcome on the other side — and doing this for
-   every game forces the augmented dataset's blue-win rate to exactly 50%, erasing the real
-   ~5-point edge the model should be learning. Instead, the data-efficiency goal (every
+2. **Champion embeddings shared across blue/red, instead of one-hot presence (not
+   label-flip augmentation).** `features.py`'s current encoding is a 4-channel one-hot over
+   every champion — mostly empty space for ~1,400 games, a classic high-dimensional/low-data
+   setup that invites memorization over generalization. Replace with a learned embedding per
+   champion, used identically in the blue- and red-side feature blocks. This also delivers the
+   data-efficiency goal an earlier version of this spec tried to get from augmentation (every
    occurrence of a champion teaches the model something, not just the ones that landed in the
-   blue slot) is met by giving each champion a single shared embedding used in both the blue-
-   and red-side feature blocks, with no fabricated examples or label flipping. The real side
-   asymmetry is preserved untouched in the training labels.
-3. **Champion embeddings instead of one-hot presence.** `features.py`'s current encoding is a
-   4-channel one-hot over every champion — mostly empty space for ~1,400 games, a classic
-   high-dimensional/low-data setup that invites memorization over generalization. Replace with
-   a learned embedding per champion. This is the largest code change in this milestone: it
-   changes `net.py`'s input shape from a flat precomputed vector to champion-index lookups plus
-   the existing aggregate features, and `predictor.py`'s inference path needs to build the same
-   input shape.
-4. **Down-weight near-empty draft prefixes.** `_prefix_examples` in `train.py` currently trains
+   blue slot) without that approach's flaw: blue side has a real, structural ~55% win rate in
+   this data (first/last pick priority, jungle pathing, river-bush vision — not caused by which
+   champions are drafted), and mirroring every example with blue/red swapped and the label
+   flipped would force the training labels to an artificial 50/50 split, erasing that real
+   ~5-point edge. Shared embeddings get the same benefit with no fabricated examples and no
+   label flipping — the real side asymmetry stays untouched in the training labels. This is the
+   largest code change in this milestone: it changes `net.py`'s input shape from a flat
+   precomputed vector to champion-index lookups plus the existing aggregate features, and
+   `predictor.py`'s inference path needs to build the same input shape.
+3. **Down-weight near-empty draft prefixes.** `_prefix_examples` in `train.py` currently trains
    on every prefix (0–20 actions) with the game's real final label, including prefixes with 0–3
    picks made that can't realistically predict the outcome. Weight examples by how many picks
    are locked in (or drop the earliest prefixes below a small threshold) so the loss isn't
