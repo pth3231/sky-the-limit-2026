@@ -234,6 +234,16 @@ def test_train_model_takes_multiple_optimizer_steps_per_epoch_with_small_batch_s
     assert step_calls > 1
 
 
+def test_train_model_defaults_use_tighter_regularization(make_game: Any, tmp_path: Path) -> None:
+    games = [_planted_game(make_game, index, index % 2 == 0) for index in range(24)]
+
+    train_model(games, tmp_path, epochs=1, seed=17, device="cpu")
+
+    checkpoint = torch.load(tmp_path / "model.pt", weights_only=True)
+    assert checkpoint["hidden_size"] == 32
+    assert checkpoint["dropout"] == 0.5
+
+
 def test_train_model_is_silent_by_default(make_game: Any, tmp_path: Path, capsys: Any) -> None:
     games = [_planted_game(make_game, index, index % 2 == 0) for index in range(24)]
 
