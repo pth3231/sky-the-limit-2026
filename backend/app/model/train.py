@@ -5,7 +5,7 @@ import importlib
 import json
 import math
 import random
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +20,8 @@ from app.engine.stats import blend_patches
 from app.model.features import DraftState, FeatureSpace
 from app.pipeline.aggregates import compute_aggregates
 from app.pipeline.dataset import GameDraft
+
+_STOPPING_SMOOTHING_WINDOW = 3
 
 
 @dataclass(frozen=True)
@@ -250,7 +252,8 @@ def train_model(
     dropout: float = 0.2,
     learning_rate: float = 0.001,
     weight_decay: float = 1e-3,
-    patience: int = 10,
+    batch_size: int = 256,
+    patience: int = 20,
     seed: int = 42,
     device: str = "auto",
     ddragon: dict[str, Any] | None = None,
@@ -306,14 +309,23 @@ def train_model(
     best_loss = float("inf")
     best_epoch = epochs
     best_state: dict[str, Any] | None = None
+    train_size = features_tensor.shape[0]
+    recent_stopping_losses: deque[float] = deque(maxlen=_STOPPING_SMOOTHING_WINDOW)
     for epoch in range(1, epochs + 1):
         model.train()
-        optimizer.zero_grad()
-        probabilities = model(features_tensor)
-        loss = torch.nn.functional.binary_cross_entropy(probabilities, labels_tensor)
-        loss.backward()
-        optimizer.step()
-        train_loss = float(loss.detach())
+        permutation = torch.randperm(train_size, device=target_device)
+        epoch_loss_total = 0.0
+        for start in range(0, train_size, batch_size):
+            batch_indices = permutation[start : start + batch_size]
+            batch_features = features_tensor[batch_indices]
+            batch_labels = labels_tensor[batch_indices]
+            optimizer.zero_grad()
+            probabilities = model(batch_features)
+            loss = torch.nn.functional.binary_cross_entropy(probabilities, batch_labels)
+            loss.backward()
+            optimizer.step()
+            epoch_loss_total += float(loss.detach()) * batch_indices.shape[0]
+        train_loss = epoch_loss_total / train_size
         if not stopping_features:
             if verbose:
                 print(f"Epoch {epoch}/{epochs}: train_loss={train_loss:.4f}")
@@ -325,9 +337,11 @@ def train_model(
                     model(stopping_tensor), stopping_labels_tensor
                 )
             )
-        is_best = stopping_loss < best_loss
+        recent_stopping_losses.append(stopping_loss)
+        smoothed_stopping_loss = sum(recent_stopping_losses) / len(recent_stopping_losses)
+        is_best = smoothed_stopping_loss < best_loss
         if is_best:
-            best_loss = stopping_loss
+            best_loss = smoothed_stopping_loss
             best_epoch = epoch
             best_state = {
                 name: value.detach().clone() for name, value in model.state_dict().items()

@@ -207,6 +207,33 @@ def test_training_learns_planted_winning_champion_and_loads_batch_predictor(
     assert (tmp_path / "model_metrics.json").is_file()
 
 
+def test_train_model_takes_multiple_optimizer_steps_per_epoch_with_small_batch_size(
+    make_game: Any, tmp_path: Path, monkeypatch: Any
+) -> None:
+    games = [_planted_game(make_game, index, index % 2 == 0) for index in range(24)]
+    step_calls = 0
+    original_step = torch.optim.Adam.step
+
+    def counting_step(self: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal step_calls
+        step_calls += 1
+        return original_step(self, *args, **kwargs)
+
+    monkeypatch.setattr(torch.optim.Adam, "step", counting_step)
+
+    train_model(
+        games,
+        tmp_path,
+        epochs=1,
+        hidden_size=8,
+        seed=17,
+        device="cpu",
+        batch_size=50,
+    )
+
+    assert step_calls > 1
+
+
 def test_train_model_is_silent_by_default(make_game: Any, tmp_path: Path, capsys: Any) -> None:
     games = [_planted_game(make_game, index, index % 2 == 0) for index in range(24)]
 
