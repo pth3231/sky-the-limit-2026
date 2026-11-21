@@ -3,6 +3,10 @@
 Roadmap step 3. Refines section 4 of
 `2026-11-19-lol-draft-coaching-assistant-design.md`.
 
+**Training result superseded:** the real-data run below showed the model not clearly
+beating a coin flip (AUC 0.515). `2026-11-21-recommendation-model-improvements-design.md`
+diagnoses this and plans the fix — read that spec for the current state of the model.
+
 ## Goal
 
 Replace the statistical scorer as the *ranking* and *win-rate* source with a PyTorch
