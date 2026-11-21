@@ -1,42 +1,32 @@
-<!-- SEED: established with the user before implementation; re-run /impeccable document once there's code to capture the actual tokens and components. -->
-
 ---
 name: Draft Coach
-description: A broadcast-grade pick/ban readout for Cloud9's League of Legends coaching staff.
+description: A focused draft workspace with champion selection, analysis, and draft status.
 ---
 
 # Design System: Draft Coach
 
 ## Overview
 
-**Creative North Star: "The Broadcast Sequence Bar"**
+**Creative North Star: "Focused Draft Workspace"**
 
-Draft Coach reads as an LCS/LEC on-air draft graphic repurposed as a working
-coaching instrument, not a SaaS analytics dashboard wearing esports colors.
-The draft board is the broadcast sequence bar itself: pick/ban order runs
-as a horizontal sequence across the top, the predicted win-rate reads like
-an on-air score ticker, and the recommendation's plain-language reason
-renders as a broadcast lower-third callout. Everything the coach needs is
-visible on one continuous screen — nothing lives behind a tab or modal.
+Draft Coach is a single-screen draft workspace matching `docs/design/redesign_overall.png`.
+The layout has two main zones: a champion selector on the left with role icons,
+search, and a scrollable portrait grid, and a stats + guidance panel on the right
+showing win rate trends and AI-driven reasoning. A compact draft bar at the bottom
+displays both teams' bans and picks with player names.
 
-The material character is flat broadcast-graphic chrome: near-black ground,
-hairline rules, crisp rectangular chips, no soft shadows or glassmorphism.
-Motion is a single signature interaction — a lock-in visibly moves the
-ticker and updates the lower-third, crisp and immediate like a live
-broadcast graphic updating, never a lingering animation.
-
-Confirmed visual rejections: no generic SaaS card-grid dashboard (soft
-shadows, blue gradients); no generic dark-theme neon-esports cliché
-(Orbitron/Rajdhani-style futurism); no literal reproduction of the real
-League Client champion-select screen.
+The material character is flat and functional: near-black surfaces, hairline rules,
+blue/red team cues, and restrained gold accents for active states. No halo effects,
+no gradients, no soft shadows — only flat colors and borders. Gradients and glow
+effects are reserved exclusively for hover states and banner elements.
 
 **Key Characteristics:**
-- Broadcast sequence bar as primary navigation, not a sidebar
-- Near-black ground with one saturated accent per side, not a gradient
-- Flat chrome: hairlines and contrast carry depth, not shadows
-- One dominant, uncluttered win-rate numeral — the ticker owns the field
-- Every recommendation ships with a plain-language reason, rendered as a
-  broadcast lower-third, never a bare score
+- Two-column layout: champion selector left, stats + guidance right
+- Compact draft bar at the bottom showing both teams' bans/picks
+- Minimal header with current action label
+- Flat surfaces with hairline rules — no halo effects or gradients at rest
+- Gold accents only for active states and hover effects
+- Gradients and glow effects permitted only for hover states and banners
 
 ## Colors
 
@@ -104,24 +94,29 @@ the time"), never as generic templated copy or raw statistical notation.
 
 ## Layout
 
-Single continuous screen, no setup → draft → summary route change. Three
-persistent zones, always visible together: the sequence bar (top, full
-width, wayfinding for where the draft stands for both teams), the champion
-grid plus win-rate ticker (center), and the insights lower-third (bottom
-or adjacent, never hidden behind a tab or modal). Exact grid, container,
-and responsive breakpoint behavior: [to be resolved during implementation].
+Single continuous screen, no scrolling at desktop sizes (1280×720 and
+1920×1080). Three persistent zones: a minimal header with the current
+action label, a two-column main area with the champion selector on the
+left and the stats + guidance panel on the right, and a compact draft bar
+at the bottom showing both teams' bans and picks. The champion grid and
+stats panel scroll internally. No hidden panels, no modals, no drawers —
+everything is visible at once.
 
 ## Elevation & Depth
 
-Flat by design — no shadows, no glassmorphism, no tonal elevation layers.
-Depth and hierarchy come entirely from the near-black ground, one
-saturated accent per side, and hairline rules, matching the broadcast
-graphic's own flat-chrome convention.
+Flat by design — no shadows, no glassmorphism, no tonal elevation layers,
+no halo effects, no gradients at rest. Depth and hierarchy come entirely
+from the near-black ground, saturated accents, and hairline rules.
 
 ### Named Rules
-**The Flat-Chrome Rule.** No `box-shadow`, no blur, no elevated surfaces
-at rest or on hover. Structure is drawn with hairlines and contrast, never
-implied with a shadow.
+**The Flat-Chrome Rule.** No `box-shadow`, no blur, no elevated surfaces,
+no halo effects, no gradients — except for hover states and banner
+elements. Structure is drawn with hairlines and contrast, never implied
+with a shadow or glow.
+
+**The Halo & Gradient Rule.** Halo effects (`box-shadow` with color spread)
+and gradients are permitted only for hover effects and banner elements.
+All other UI elements use flat colors and borders exclusively.
 
 ## Shapes
 
@@ -135,21 +130,24 @@ elsewhere.
 ## Do's and Don'ts
 
 ### Do:
-- **Do** let the win-rate ticker be the one dominant, uncluttered numeral
-  on screen (The One Numeral Rule).
-- **Do** give the pick/ban clock an exact, measured timer treatment, not
-  a decorative countdown animation.
+- **Do** keep the layout focused: ban/pick, analysis, and champion selection only.
+- **Do** use permitted Riot Data Dragon portraits with graceful fallbacks.
 - **Do** write every contributing-factor explanation as specific and
   hand-checked (The Exact-Phrasing Rule), never generic template copy.
-- **Do** commit to one disciplined type system with hairline dividers
-  throughout, rather than mixing weights or styles loosely.
+- **Do** keep the header and footer minimal and unobtrusive.
+- **Do** use halo effects and gradients for hover states and banner elements
+  to provide visual feedback (The Halo & Gradient Rule).
 
 ### Don't:
+- **Don't** add unnecessary panels, drawers, or hidden sections.
 - **Don't** use a generic SaaS card-grid dashboard look (soft shadows,
   blue gradients, rounded cards).
 - **Don't** use the generic dark-theme neon-esports cliché (Orbitron/
   Rajdhani-style futuristic gaming fonts).
-- **Don't** reproduce the real League Client champion-select screen
-  literally.
+- **Don't** add halo effects, gradients, or glow to static UI elements
+  (The Halo & Gradient Rule).
 - **Don't** add shadows, blur, or elevated surfaces anywhere (The
   Flat-Chrome Rule).
+- **Don't** invent roles, player names, or roster facts from row order
+  or assumptions.
+- **Don't** commit GRID data or derived datasets to version control.

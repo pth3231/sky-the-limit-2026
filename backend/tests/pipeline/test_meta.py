@@ -23,6 +23,7 @@ def test_load_games_maps_sides_and_filters_other_titles(tmp_path: Path) -> None:
                 "game_id": "game-1",
                 "game_number": "2",
                 "patch": "15.10",
+                "started_at": "2026-10-10T12:00:00Z",
                 "finished": "true",
                 "winner_team_id": "team-2",
                 "team1_id": "team-1",
@@ -50,6 +51,7 @@ def test_load_games_maps_sides_and_filters_other_titles(tmp_path: Path) -> None:
 
     assert list(games) == ["game-1"]
     assert games["game-1"].game_number == 2
+    assert games["game-1"].started_at == "2026-10-10T12:00:00Z"
     assert games["game-1"].blue_team_id == "team-2"
     assert games["game-1"].red_team_id == "team-1"
     assert games["game-1"].finished is True
@@ -80,3 +82,60 @@ def test_load_champions_and_teams_as_typed_lol_records(tmp_path: Path) -> None:
     assert champions["champ-1"].games_played == 12
     assert teams["team-1"].name == "Cloud9 Kia"
     assert "team-2" not in teams
+
+
+def test_load_champion_roles_uses_explicit_positions_only(tmp_path: Path) -> None:
+    from app.pipeline.meta import load_champion_roles
+
+    meta = tmp_path / "meta"
+    meta.mkdir()
+    _write_csv(
+        meta,
+        "rosters.csv",
+        [
+            {"title": "lol", "game_id": "g1", "team_id": "t1", "character_id": "c0", "position": "support"},
+            {"title": "lol", "game_id": "g1", "team_id": "t1", "character_id": "c1", "position": "top"},
+            {"title": "lol", "game_id": "g1", "team_id": "t1", "character_id": "c2", "position": "middle"},
+            {"title": "lol", "game_id": "g1", "team_id": "t1", "character_id": "c3", "position": "adc"},
+            {"title": "lol", "game_id": "g1", "team_id": "t1", "character_id": "c4", "position": "jungle"},
+            {"title": "lol", "game_id": "g1", "team_id": "t1", "character_id": "c5", "position": "top"},
+            {"title": "lol", "game_id": "g2", "team_id": "t1", "character_id": "c5", "position": "mid"},
+            {"title": "lol", "game_id": "g1", "team_id": "t1", "character_id": "c6", "position": "carry"},
+        ],
+    )
+    roles = load_champion_roles(tmp_path)
+    assert roles == {
+        "c0": "support",
+        "c1": "top",
+        "c2": "mid",
+        "c3": "bot",
+        "c4": "jungle",
+    }
+    assert load_champion_roles(tmp_path / "missing") == {}
+
+
+def test_load_champion_roles_does_not_infer_from_rows_without_positions(tmp_path: Path) -> None:
+    from app.pipeline.meta import load_champion_roles
+
+    _write_csv(
+        tmp_path / "meta",
+        "rosters.csv",
+        [
+            {"title": "lol", "game_id": "g1", "team_id": "t1", "character_id": f"c{i}"}
+            for i in range(5)
+        ],
+    )
+
+    assert load_champion_roles(tmp_path) == {}
+
+
+def test_current_roster_schema_does_not_invent_roles(tmp_path: Path) -> None:
+    from app.pipeline.meta import load_champion_roles
+
+    _write_csv(tmp_path / "meta", "rosters.csv", [{
+        "title": "lol", "series_id": "s", "game_id": "g", "game_number": "1",
+        "team_id": "t", "team_name": "Test", "side": "blue", "player_id": str(i),
+        "player_name": f"P{i}", "character_id": str(i), "character_name": f"C{i}",
+        "participation_status": "played",
+    } for i in [3, 0, 4, 1, 2]])
+    assert load_champion_roles(tmp_path) == {}

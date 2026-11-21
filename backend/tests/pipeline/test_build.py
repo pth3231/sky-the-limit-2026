@@ -72,10 +72,11 @@ def test_build_writes_drafts_and_aggregates_json(
     monkeypatch.setenv("STL_DATA_DIR", str(data_dir))
     output_dir = tmp_path / "output"
 
-    main(["--out", str(output_dir)])
+    main(["--no-ddragon", "--out", str(output_dir)])
 
     drafts = json.loads((output_dir / "drafts.json").read_text(encoding="utf-8"))
     aggregates = json.loads((output_dir / "aggregates.json").read_text(encoding="utf-8"))
+    assert not (output_dir / "ddragon.json").exists()
     assert drafts[0]["game_id"] == "game-1"
     assert drafts[0]["actions"][0]["champion_id"] == "champ-1"
     assert aggregates["15.10"]["champions"][0]["picks"] == 1
@@ -88,14 +89,16 @@ def test_configured_derived_dir_is_the_default_output(tmp_path: Path, monkeypatc
     output_dir = tmp_path / "configured-derived"
     monkeypatch.setenv("STL_DATA_DIR", str(data_dir))
     monkeypatch.setenv("DRAFT_COACH_DERIVED_DIR", str(output_dir))
-    calls: list[tuple[Path, Path]] = []
+    calls: list[tuple[Path, Path, bool]] = []
 
     monkeypatch.setattr(
         build_module,
         "build_outputs",
-        lambda source, destination: calls.append((source, destination)) or ([], {}),
+        lambda source, destination, *, include_ddragon=True: (
+            calls.append((source, destination, include_ddragon)) or ([], {})
+        ),
     )
 
     main([])
 
-    assert calls == [(data_dir, output_dir)]
+    assert calls == [(data_dir, output_dir, True)]

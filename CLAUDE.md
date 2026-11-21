@@ -7,12 +7,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Status
 
 The repository contains a Python backend in `backend/`: a streamed GRID data pipeline,
-patch aggregates, a stateless FastAPI draft API, Fearless draft validation, and an explainable
-statistical scorer. The PyTorch recommendation model, genetic algorithm, and Next.js frontend are
+patch aggregates, a stateless FastAPI draft API, Fearless draft validation, an explainable
+statistical scorer, and an optional PyTorch win-probability model used as the fitness function of
+a genetic search (statistical fallback when no model is present). The Next.js frontend is
 planned; see [README.md](README.md#roadmap) for the roadmap.
 
 Run backend checks from `backend/` with `uv run pytest -q`, `uv run ruff check .`,
 `uv run ruff format --check .`, and `uv run basedpyright`. Build local derived data with
-`uv run python -m app.pipeline.build`; start the API with `uv run uvicorn app.api.main:app`.
+`uv run python -m app.pipeline.build`; install PyTorch with `uv sync --extra cpu` (or `cu128`)
+and train with `uv run python -m app.model.train`; start the API with
+`uv run uvicorn app.api.main:app`.
 Keep the GRID data repository outside this project and set `STL_DATA_DIR` when it is not at the
-documented sibling path. Never commit data or derived artifacts.
+documented sibling path. Never commit data or derived artifacts, including `model.pt` and
+`model_metrics.json`.
