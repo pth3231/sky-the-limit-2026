@@ -15,9 +15,10 @@ def build_outputs(
     output_dir: Path,
     *,
     include_ddragon: bool = True,
+    verbose: bool = False,
 ) -> tuple[list[GameDraft], dict[str, PatchAggregate]]:
     """Build game drafts and patch aggregates, writing both JSON artifacts."""
-    game_drafts = build_game_drafts(data_dir)
+    game_drafts = build_game_drafts(data_dir, verbose=verbose)
     aggregates = compute_aggregates(game_drafts)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -60,6 +61,7 @@ def main(argv: list[str] | None = None) -> None:
         settings.data_dir,
         output_dir,
         include_ddragon=not arguments.no_ddragon,
+        verbose=True,
     )
     print(
         f"Wrote {len(game_drafts)} game drafts and {len(aggregates)} patch aggregates "
