@@ -30,3 +30,23 @@ Before doing any work in this repo, read these in order. Each owns a distinct ki
 - **Final results** come from the `seriesState` of the last event that has one. Per-event changes are in `seriesStateDelta`.
 - **Joins.** Supplement `grid_event_id` = GRID `events[].id`. Supplement `occurred_at` = envelope `occurredAt`. `player_id`/`game_id` are GRID IDs. All IDs are strings.
 - **Other license constraints.** Don't upload, publish or mirror the data, or derived datasets containing it, anywhere outside the user's machine. Don't add the data to model-training pipelines that outlive the hackathon. The license to use the data ends when the hackathon ends (copies don't have to be deleted unless Cloud9 asks in writing, but must not be used). Projects should read data from a local clone of this repository. Small excerpts are acceptable only to demonstrate the project to judges. See [LICENSE](LICENSE.md).
+
+## Workflow conventions for AI agents
+
+- **Issue-first rule (The Issue-First Rule):** Every task requires a GitHub
+  issue before any work begins — code, documentation, or convention changes.
+  Create the issue before branching. If you realize mid-work that no issue
+  exists, stop and create one before committing. This ensures every PR has
+  an issue to close and every change is traceable. See
+  [CONVENTIONS.md](CONVENTIONS.md#issues) for details.
+- **Auto-close issues on PR merge:** When creating a Pull Request, the PR
+  description **must** include `Closes #<issue-number>` on its own line so
+  GitHub automatically closes the related issue when the PR is merged. If
+  the PR addresses multiple issues, list all of them (e.g. `Closes #9, #10`).
+  Additionally, add a `Closes: #<N>` trailer to the final commit message
+  using `git commit --trailer "Closes: #<N>"` so the link survives squash
+  merges. See [CONVENTIONS.md](CONVENTIONS.md#pull-requests) for the full
+  PR workflow.
+- **Do not leave issues open after merging:** If a PR has been merged and the
+  related issue is still open, close it manually with a comment referencing
+  the merged PR.

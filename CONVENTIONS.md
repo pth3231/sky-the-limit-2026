@@ -25,19 +25,32 @@ Every branch traces back to an issue — see Issues below.
 
 - Title: `[Area] Short description` (e.g. `[GA] Legal-pool check fails after Game 2`).
 - One type label per issue: `bug`, `feature`, `chore`, `question`.
-- Open an issue before starting a branch, including for small fixes — the
-  branch name's issue number depends on it.
+- **Every task requires an issue.** Open an issue before starting any work —
+  code, documentation, or conventions. The branch name's issue number depends
+  on it, and the PR must reference it. No exceptions, not for small fixes or
+  documentation-only changes.
+- **Named rule — The Issue-First Rule:** An issue exists before a branch is
+  created. If you realize mid-work that no issue was opened, stop and create
+  one before committing. This ensures every change is traceable and every PR
+  has an issue to close.
 
 ## Pull requests
 
 - One PR per issue.
 - PR title: Conventional Commits format, same as commit messages — it
   becomes the final commit message on `main` via squash merge.
-- Description must include `Closes #<issue-number>`.
+- **Auto-close the related issue:** The PR description **must** include
+  `Closes #<issue-number>` on its own line so GitHub automatically closes
+  the issue when the PR is merged. Additionally, add a `Closes: #<N>`
+  trailer to the commit message (e.g. `git commit --trailer "Closes: #9"`)
+  so the link is preserved in history even if the PR body is lost.
 - Merge strategy: **squash merge only**. Keeps `main` linear, one commit
   per PR.
 - No required reviewer (solo project) — merge once the PR is ready and any
   checks pass.
+- **Before merging:** Verify the `Closes #<N>` keyword is present in the PR
+  body. If the PR addresses multiple issues, list each one (e.g.
+  `Closes #9, #10`).
 
 ## What gets committed
 
