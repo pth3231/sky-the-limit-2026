@@ -7,11 +7,14 @@ from pathlib import Path
 from app.config import Settings
 from app.pipeline.aggregates import PatchAggregate, compute_aggregates
 from app.pipeline.dataset import GameDraft, build_game_drafts
+from app.pipeline.ddragon import fetch_ddragon
 
 
 def build_outputs(
     data_dir: Path,
     output_dir: Path,
+    *,
+    include_ddragon: bool = True,
 ) -> tuple[list[GameDraft], dict[str, PatchAggregate]]:
     """Build game drafts and patch aggregates, writing both JSON artifacts."""
     game_drafts = build_game_drafts(data_dir)
@@ -30,6 +33,8 @@ def build_outputs(
         json.dumps(aggregates_payload, indent=2) + "\n",
         encoding="utf-8",
     )
+    if include_ddragon:
+        fetch_ddragon(output_dir)
     return game_drafts, aggregates
 
 
@@ -42,11 +47,20 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Output directory (default: DRAFT_COACH_DERIVED_DIR or backend/.derived)",
     )
+    parser.add_argument(
+        "--no-ddragon",
+        action="store_true",
+        help="Skip the optional Data Dragon champion metadata download",
+    )
     arguments = parser.parse_args(argv)
 
     settings = Settings()
     output_dir = arguments.out or settings.derived_dir
-    game_drafts, aggregates = build_outputs(settings.data_dir, output_dir)
+    game_drafts, aggregates = build_outputs(
+        settings.data_dir,
+        output_dir,
+        include_ddragon=not arguments.no_ddragon,
+    )
     print(
         f"Wrote {len(game_drafts)} game drafts and {len(aggregates)} patch aggregates "
         f"to {output_dir}"

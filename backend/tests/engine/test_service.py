@@ -1,5 +1,6 @@
 import csv
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -8,11 +9,18 @@ import pytest
 from app.engine.errors import DraftStateError
 from app.engine.models import DraftRequest
 from app.engine.service import DraftEngine, load_engine, resolve_our_team_id
+from app.model.features import DraftState
+from app.model.predictor import WinPredictor
 from app.pipeline.aggregates import compute_aggregates
 from app.pipeline.dataset import GameDraft
 from app.pipeline.meta import Champion, Team
 
 BANS = ["c7", "c8", "c9", "c10", "c11", "c4"]
+
+
+class ConstantPredictor:
+    def predict(self, states: Sequence[DraftState]) -> list[float]:
+        return [0.8] * len(states)
 
 
 def _request(**overrides: Any) -> DraftRequest:
@@ -36,6 +44,47 @@ def test_our_slot_gets_a_legal_recommendation_and_alternatives(engine: DraftEngi
     assert response.recommendation.champion_id == "c5"
     assert 0 < response.win_rate < 1
     assert response.contributing_factors == response.recommendation.contributing_factors
+    assert response.engine == "statistical"
+
+
+def test_model_engine_uses_predictions_and_keeps_statistical_explanations(
+    synthetic_drafts: list[GameDraft],
+) -> None:
+
+    champions = {
+        f"c{number}": Champion(character_id=f"c{number}", name=f"Champ {number}", games_played=0)
+        for number in range(24)
+    }
+    teams = {
+        team_id: Team(team_id=team_id, name=name)
+        for team_id, name in {
+            "c9": "Cloud9 Kia",
+            "opp": "Rivals",
+            "t1": "Team One",
+            "t2": "Team Two",
+        }.items()
+    }
+    engine = DraftEngine(
+        compute_aggregates(synthetic_drafts),
+        champions,
+        teams,
+        our_team_id="c9",
+        min_games=1,
+        predictor=ConstantPredictor(),
+    )
+
+    response = engine.recommend(_request(actions=BANS))
+    opponent_turn = engine.recommend(_request(ourSide="red"))
+
+    assert response.engine == "model"
+    assert response.game_win_rate == 0.8
+    assert response.recommendation is not None
+    assert response.recommendation.score == 0.8
+    assert "Model estimates" in response.recommendation.reason
+    assert "Statistical signal:" in response.recommendation.reason
+    assert opponent_turn.engine == "model"
+    assert opponent_turn.game_win_rate == 0.2
+    assert opponent_turn.recommendation is None
 
 
 def test_fearless_excluded_champions_are_never_suggested(engine: DraftEngine) -> None:
@@ -178,13 +227,26 @@ def test_resolves_cloud9_by_name_unless_configured() -> None:
 
 
 def test_load_engine_reads_derived_aggregates_and_meta(
-    tmp_path: Path, synthetic_drafts: list[GameDraft]
+    tmp_path: Path, synthetic_drafts: list[GameDraft], monkeypatch: Any
 ) -> None:
     derived = tmp_path / "derived"
     derived.mkdir()
     aggregates = compute_aggregates(synthetic_drafts)
     (derived / "aggregates.json").write_text(
         json.dumps({patch: item.model_dump(mode="json") for patch, item in aggregates.items()}),
+        encoding="utf-8",
+    )
+    portrait_url = "https://ddragon.leagueoflegends.com/cdn/16.1.1/img/champion/Aatrox.png"
+    (derived / "ddragon.json").write_text(
+        json.dumps(
+            {
+                "champ0": {
+                    "tags": [],
+                    "info": {},
+                    "portrait_url": portrait_url,
+                }
+            }
+        ),
         encoding="utf-8",
     )
     meta = tmp_path / "data" / "meta"
@@ -205,7 +267,23 @@ def test_load_engine_reads_derived_aggregates_and_meta(
 
     assert engine.patches() == ["16.1"]
     assert {champion.champion_id for champion in engine.champion_list()} >= {"c0", "c5"}
+    assert next(champion for champion in engine.champion_list() if champion.champion_id == "c0").portrait_url == portrait_url
     assert engine.recommend(_request()).recommendation is not None
+    assert engine.recommend(_request()).engine == "statistical"
+
+    model_path = derived / "model.pt"
+    model_path.touch()
+    loaded_paths: list[Path] = []
+
+    def fake_load(_: type[WinPredictor], path: Path) -> ConstantPredictor:
+        loaded_paths.append(path)
+        return ConstantPredictor()
+
+    monkeypatch.setattr(WinPredictor, "load", classmethod(fake_load))
+    model_engine = load_engine(derived, tmp_path / "data", None, min_games=1)
+
+    assert loaded_paths == [model_path]
+    assert model_engine.recommend(_request(ourSide="red")).engine == "model"
 
 
 def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:

@@ -21,7 +21,7 @@ def test_lists_use_camel_case(client: TestClient) -> None:
     champions = client.get("/champions").json()
 
     assert teams[0] == {"teamId": "opp", "name": "Rivals"}
-    assert {"championId": "c0", "name": "Champ 0"} in champions
+    assert {"championId": "c0", "name": "Champ 0", "role": None, "portraitUrl": None} in champions
     assert client.get("/patches").json() == ["16.1"]
 
 
@@ -47,6 +47,7 @@ def test_recommend_accepts_and_returns_camel_case(client: TestClient) -> None:
         "limited",
     }
     assert {"winRate", "gameWinRate", "opponentTendencies", "fearlessExcludedIds"} <= set(body)
+    assert body["engine"] == "statistical"
 
 
 @pytest.mark.parametrize(

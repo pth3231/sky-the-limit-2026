@@ -10,6 +10,11 @@ stl-hackathon-2026-grid-starter/
 # Local Python environment
 .venv/
 
+# Local environment settings (examples remain shareable)
+.env
+.env.*
+!.env.example
+
 # Python and pytest caches
 __pycache__/
 .pytest_cache/
@@ -17,3 +22,16 @@ __pycache__/
 
 # Derived pipeline outputs (GRID data)
 backend/.derived/
+# Model weights trained on GRID data, wherever they are written
+*.pt
+*.pth
+model_metrics.json
+
+# AI tool artifacts
+.impeccable/
+.junie/
+.playwright-mcp/
+
+# Frontend build output
+frontend/.next/
+frontend/node_modules/

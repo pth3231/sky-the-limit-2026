@@ -3,9 +3,15 @@
 import csv
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.pipeline.drafts import DraftAction, extract_game_drafts, read_final_series_state
+from app.pipeline.drafts import (
+    DraftAction,
+    PlayerLine,
+    extract_game_drafts,
+    extract_game_lineups,
+    read_final_series_state,
+)
 from app.pipeline.meta import load_games
 
 
@@ -23,6 +29,8 @@ class GameDraft(BaseModel):
     blue_team_id: str
     red_team_id: str
     actions: list[DraftAction]
+    started_at: str = ""
+    lineups: list[PlayerLine] = Field(default_factory=list)
 
 
 def build_game_drafts(data_dir: Path) -> list[GameDraft]:
@@ -34,7 +42,9 @@ def build_game_drafts(data_dir: Path) -> list[GameDraft]:
     with series_path.open(newline="", encoding="utf-8-sig") as file:
         for series in csv.DictReader(file):
             feed_path = data_dir / series["file"]
-            drafts = extract_game_drafts(read_final_series_state(feed_path))
+            series_state = read_final_series_state(feed_path)
+            drafts = extract_game_drafts(series_state)
+            lineups = extract_game_lineups(series_state)
             for game_id, actions in drafts.items():
                 game = games.get(game_id)
                 if game is None or not actions:
@@ -50,6 +60,8 @@ def build_game_drafts(data_dir: Path) -> list[GameDraft]:
                         blue_team_id=game.blue_team_id,
                         red_team_id=game.red_team_id,
                         actions=actions,
+                        started_at=game.started_at,
+                        lineups=lineups.get(game_id, []),
                     )
                 )
 

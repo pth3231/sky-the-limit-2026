@@ -8,6 +8,23 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DERIVED_DIR = Path(__file__).resolve().parents[1] / ".derived"
+BACKEND_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+
+
+class _AppSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=BACKEND_ENV_FILE,
+        env_file_encoding="utf-8",
+        populate_by_name=True,
+    )
+
+
+class DerivedSettings(_AppSettings):
+    """Settings needed by model training without requiring the GRID data directory."""
+
+    derived_dir: Path = Field(
+        default=DEFAULT_DERIVED_DIR, validation_alias="DRAFT_COACH_DERIVED_DIR"
+    )
 
 
 def _require_meta(data_dir: Path) -> Path:
@@ -42,10 +59,8 @@ def _default_data_dir() -> Path:
     return resolve_data_dir(os.environ, candidates)
 
 
-class Settings(BaseSettings):
-    """Validated application settings loaded from the process environment."""
-
-    model_config = SettingsConfigDict(populate_by_name=True)
+class Settings(_AppSettings):
+    """Validated application settings loaded from the backend environment file."""
 
     data_dir: Path = Field(default_factory=_default_data_dir, validation_alias="STL_DATA_DIR")
     derived_dir: Path = Field(

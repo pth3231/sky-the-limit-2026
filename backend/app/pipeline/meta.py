@@ -1,12 +1,25 @@
 """Typed loaders for the GRID metadata CSV files."""
 
 import csv
+from collections import Counter, defaultdict
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 _BOOL_ADAPTER = TypeAdapter(bool)
+Role = Literal["top", "jungle", "mid", "bot", "support"]
+_ROLE_NAMES: dict[str, Role] = {
+    "top": "top",
+    "jungle": "jungle",
+    "mid": "mid",
+    "middle": "mid",
+    "bot": "bot",
+    "bottom": "bot",
+    "adc": "bot",
+    "support": "support",
+}
 
 
 class GameMeta(BaseModel):
@@ -22,6 +35,7 @@ class GameMeta(BaseModel):
     winner_team_id: str | None
     blue_team_id: str
     red_team_id: str
+    started_at: str = ""
 
 
 class Champion(BaseModel):
@@ -32,6 +46,7 @@ class Champion(BaseModel):
     character_id: str
     name: str
     games_played: int
+    role: str | None = None
 
 
 class Team(BaseModel):
@@ -69,6 +84,7 @@ def _game_from_row(row: dict[str, str]) -> GameMeta:
         winner_team_id=winner_team_id,
         blue_team_id=sides["blue"],
         red_team_id=sides["red"],
+        started_at=row.get("started_at", ""),
     )
 
 
@@ -80,13 +96,35 @@ def load_games(data_dir: Path) -> dict[str, GameMeta]:
     }
 
 
+def load_champion_roles(data_dir: Path) -> dict[str, str]:
+    """Derive champion roles only from explicit, recognized roster positions."""
+    try:
+        rows = list(_lol_rows(data_dir, "rosters.csv"))
+    except FileNotFoundError:
+        return {}
+    counts: dict[str, Counter[Role]] = defaultdict(Counter)
+    for row in rows:
+        role = _ROLE_NAMES.get(row.get("position", "").strip().casefold())
+        character_id = row.get("character_id", "").strip()
+        if role and character_id:
+            counts[character_id][role] += 1
+    result: dict[str, str] = {}
+    for character_id, roles in counts.items():
+        most_common = roles.most_common()
+        if len(most_common) == 1 or most_common[0][1] > most_common[1][1]:
+            result[character_id] = most_common[0][0]
+    return result
+
+
 def load_champions(data_dir: Path) -> dict[str, Champion]:
     """Load LoL champion metadata indexed by GRID character ID."""
+    roles = load_champion_roles(data_dir)
     champions = (
         Champion(
             character_id=row["character_id"],
             name=row["name"],
             games_played=int(row["games_played"]),
+            role=roles.get(row["character_id"]),
         )
         for row in _lol_rows(data_dir, "characters.csv")
     )

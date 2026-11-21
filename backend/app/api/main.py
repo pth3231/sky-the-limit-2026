@@ -7,12 +7,18 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.config import Settings
 from app.engine.errors import DraftStateError
-from app.engine.models import ChampionSummary, DraftRequest, DraftResponse, TeamSummary
+from app.engine.models import (
+    ChampionSummary,
+    DraftRequest,
+    DraftResponse,
+    RosterResponse,
+    TeamSummary,
+)
 from app.engine.service import DraftEngine, load_engine
 
 
@@ -55,6 +61,12 @@ def create_app(engine: DraftEngine | None = None) -> FastAPI:
         """List opponents with recorded games."""
         return engine.opponents()
 
+    @app.get("/rosters", response_model=RosterResponse)
+    def rosters(
+        engine: EngineDependency, opponent_team_id: Annotated[str, Query(alias="opponentTeamId")]
+    ) -> RosterResponse:
+        """Return the latest verified historical rosters for both teams."""
+        return engine.rosters(opponent_team_id)
     @app.get("/champions", response_model=list[ChampionSummary])
     def champions(engine: EngineDependency) -> list[ChampionSummary]:
         """List draftable champions."""

@@ -64,6 +64,25 @@ class Candidate(CamelModel):
     contributing_factors: list[ContributingFactor]
 
 
+class ChainStep(CamelModel):
+    """One step in a recommended ban/pick chain."""
+
+    slot_index: int
+    action: ActionType
+    champion_id: str
+    champion_name: str
+    score: float
+    reason: str
+
+
+class ChainRecommendation(CamelModel):
+    """A full chain of recommended ban/pick moves for the remaining draft."""
+
+    steps: list[ChainStep]
+    estimated_win_rate: float
+    engine: Literal["model", "statistical"]
+
+
 class OpponentTendency(CamelModel):
     """How often the opponent has picked or banned a champion on the blended patches."""
 
@@ -82,11 +101,35 @@ class TeamSummary(CamelModel):
     name: str
 
 
+class RosterPlayer(CamelModel):
+    """A player verified in a historical game roster."""
+
+    player_id: str
+    name: str
+    role: Literal["top", "jungle", "mid", "bot", "support"] | None = None
+
+
+class TeamRoster(TeamSummary):
+    """A team and its latest verified historical roster snapshot."""
+
+    as_of: str | None
+    players: list[RosterPlayer]
+
+
+class RosterResponse(CamelModel):
+    """Historical roster snapshots for our team and the selected opponent."""
+
+    our_team: TeamRoster
+    opponent_team: TeamRoster
+
+
 class ChampionSummary(CamelModel):
-    """A champion that can be drafted."""
+    """A champion that can be drafted, with optional role and portrait metadata."""
 
     champion_id: str
     name: str
+    role: Literal["top", "jungle", "mid", "bot", "support"] | None = None
+    portrait_url: str | None = None
 
 
 class DraftResponse(CamelModel):
@@ -97,6 +140,7 @@ class DraftResponse(CamelModel):
     next_slot: Slot | None
     recommendation: Candidate | None
     alternatives: list[Candidate]
+    chain_recommendation: ChainRecommendation | None = None
     win_rate: float
     game_win_rate: float
     opponent_tendencies: list[OpponentTendency]
@@ -104,3 +148,4 @@ class DraftResponse(CamelModel):
     fearless_excluded_ids: list[str]
     unavailable_ids: list[str]
     sample_note: str | None
+    engine: Literal["model", "statistical"]
