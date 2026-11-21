@@ -6,6 +6,7 @@ import json
 import math
 import random
 from collections import defaultdict, deque
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +18,7 @@ from app.config import DerivedSettings
 from app.engine.draft_order import DRAFT_ORDER
 from app.engine.scoring import Scorer
 from app.engine.stats import blend_patches
-from app.model.features import DraftState, FeatureSpace
+from app.model.features import DraftState, EncodedState, FeatureSpace
 from app.pipeline.aggregates import compute_aggregates
 from app.pipeline.dataset import GameDraft
 
@@ -120,7 +121,7 @@ def _out_of_fold_features(
     examples: list[_PrefixExample],
     games: list[GameDraft],
     ddragon: dict[str, Any] | None = None,
-) -> list[list[float]]:
+) -> list[EncodedState]:
     """Encode each example with historical stats fitted outside its series fold."""
     series_games: dict[str, list[GameDraft]] = defaultdict(list)
     for game in games:
@@ -142,7 +143,7 @@ def _out_of_fold_features(
             )
         examples_by_fold[fold].append((index, example))
 
-    features: list[list[float] | None] = [None] * len(examples)
+    encoded: list[EncodedState | None] = [None] * len(examples)
     for fold, fold_examples in examples_by_fold.items():
         history_games = [game for game in games if series_folds[game.series_id] != fold]
         feature_space = FeatureSpace.fit(
@@ -151,11 +152,11 @@ def _out_of_fold_features(
             vocabulary_games=games,
         )
         for index, example in fold_examples:
-            features[index] = feature_space.encode(example.state)
+            encoded[index] = feature_space.encode(example.state)
 
-    if any(feature is None for feature in features):
+    if any(value is None for value in encoded):
         raise RuntimeError("Not all training examples received out-of-fold features")
-    return [feature for feature in features if feature is not None]
+    return [value for value in encoded if value is not None]
 
 
 def _torch_module() -> Any:
@@ -243,6 +244,27 @@ def _resolve_device(torch: Any, device: str) -> Any:
     return torch.device(device)
 
 
+def _stack_encoded(
+    torch: Any, encoded_states: Sequence[EncodedState], device: Any
+) -> tuple[Any, Any, Any, Any, Any]:
+    """Stack a batch of EncodedState into the five tensors DraftNet.forward expects."""
+    return (
+        torch.tensor(
+            [state.blue_picks for state in encoded_states], dtype=torch.long, device=device
+        ),
+        torch.tensor(
+            [state.blue_bans for state in encoded_states], dtype=torch.long, device=device
+        ),
+        torch.tensor(
+            [state.red_picks for state in encoded_states], dtype=torch.long, device=device
+        ),
+        torch.tensor([state.red_bans for state in encoded_states], dtype=torch.long, device=device),
+        torch.tensor(
+            [state.continuous for state in encoded_states], dtype=torch.float32, device=device
+        ),
+    )
+
+
 def train_model(
     games: list[GameDraft],
     output_dir: Path,
@@ -278,12 +300,11 @@ def train_model(
     stopping_examples = _prefix_examples(stopping_games)
     validation_examples = _prefix_examples(validation_games)
     feature_space = FeatureSpace.fit(fit_games, ddragon)
-    input_size = feature_space.input_size
-    train_features = _out_of_fold_features(train_examples, fit_games, ddragon)
+    train_encoded = _out_of_fold_features(train_examples, fit_games, ddragon)
     train_labels = [example.label for example in train_examples]
-    stopping_features = [feature_space.encode(example.state) for example in stopping_examples]
+    stopping_encoded = [feature_space.encode(example.state) for example in stopping_examples]
     stopping_labels = [example.label for example in stopping_examples]
-    validation_features = [feature_space.encode(example.state) for example in validation_examples]
+    validation_encoded = [feature_space.encode(example.state) for example in validation_examples]
     validation_labels = [example.label for example in validation_examples]
 
     random.seed(seed)
@@ -298,10 +319,17 @@ def train_model(
             f"{len(validation_games)} validation games, up to {epochs} epochs, "
             f"patience={patience}"
         )
-    model = DraftNet(input_size, hidden_size=hidden_size, dropout=dropout).to(target_device)
-    features_tensor = torch.tensor(train_features, dtype=torch.float32, device=target_device)
+    model = DraftNet(
+        feature_space.num_champions,
+        feature_space.continuous_size,
+        hidden_size=hidden_size,
+        dropout=dropout,
+    ).to(target_device)
+    blue_picks_tensor, blue_bans_tensor, red_picks_tensor, red_bans_tensor, continuous_tensor = (
+        _stack_encoded(torch, train_encoded, target_device)
+    )
     labels_tensor = torch.tensor(train_labels, dtype=torch.float32, device=target_device)
-    stopping_tensor = torch.tensor(stopping_features, dtype=torch.float32, device=target_device)
+    stopping_tensors = _stack_encoded(torch, stopping_encoded, target_device)
     stopping_labels_tensor = torch.tensor(
         stopping_labels, dtype=torch.float32, device=target_device
     )
@@ -309,7 +337,7 @@ def train_model(
     best_loss = float("inf")
     best_epoch = epochs
     best_state: dict[str, Any] | None = None
-    train_size = features_tensor.shape[0]
+    train_size = labels_tensor.shape[0]
     recent_stopping_losses: deque[float] = deque(maxlen=_STOPPING_SMOOTHING_WINDOW)
     for epoch in range(1, epochs + 1):
         model.train()
@@ -317,16 +345,22 @@ def train_model(
         epoch_loss_total = 0.0
         for start in range(0, train_size, batch_size):
             batch_indices = permutation[start : start + batch_size]
-            batch_features = features_tensor[batch_indices]
-            batch_labels = labels_tensor[batch_indices]
             optimizer.zero_grad()
-            probabilities = model(batch_features)
-            loss = torch.nn.functional.binary_cross_entropy(probabilities, batch_labels)
+            probabilities = model(
+                blue_picks_tensor[batch_indices],
+                blue_bans_tensor[batch_indices],
+                red_picks_tensor[batch_indices],
+                red_bans_tensor[batch_indices],
+                continuous_tensor[batch_indices],
+            )
+            loss = torch.nn.functional.binary_cross_entropy(
+                probabilities, labels_tensor[batch_indices]
+            )
             loss.backward()
             optimizer.step()
             epoch_loss_total += float(loss.detach()) * batch_indices.shape[0]
         train_loss = epoch_loss_total / train_size
-        if not stopping_features:
+        if not stopping_encoded:
             if verbose:
                 print(f"Epoch {epoch}/{epochs}: train_loss={train_loss:.4f}")
             continue
@@ -334,7 +368,7 @@ def train_model(
         with torch.inference_mode():
             stopping_loss = float(
                 torch.nn.functional.binary_cross_entropy(
-                    model(stopping_tensor), stopping_labels_tensor
+                    model(*stopping_tensors), stopping_labels_tensor
                 )
             )
         recent_stopping_losses.append(stopping_loss)
@@ -362,15 +396,11 @@ def train_model(
         print(f"Training finished: best epoch {best_epoch}, best stopping_loss={best_loss:.4f}")
 
     model.eval()
-    if validation_features:
+    if validation_encoded:
         with torch.inference_mode():
-            validation_tensor = torch.tensor(
-                validation_features,
-                dtype=torch.float32,
-                device=target_device,
-            )
+            validation_tensors = _stack_encoded(torch, validation_encoded, target_device)
             model_probabilities = [
-                float(value) for value in model(validation_tensor).detach().cpu().tolist()
+                float(value) for value in model(*validation_tensors).detach().cpu().tolist()
             ]
     else:
         model_probabilities = []
@@ -400,7 +430,9 @@ def train_model(
     torch.save(
         {
             "state_dict": model.cpu().state_dict(),
-            "input_size": input_size,
+            "num_champions": feature_space.num_champions,
+            "continuous_size": feature_space.continuous_size,
+            "embedding_dim": 16,
             "hidden_size": hidden_size,
             "dropout": dropout,
             "feature_space": feature_space.model_dump(mode="json"),

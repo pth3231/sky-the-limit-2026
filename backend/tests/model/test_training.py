@@ -188,7 +188,7 @@ def test_out_of_fold_features_are_deterministic_and_handle_one_series(make_game:
     second = _out_of_fold_features(examples, [game])
 
     assert first == second
-    assert len({len(features) for features in first}) == 1
+    assert len({len(encoded.continuous) for encoded in first}) == 1
 
 
 def test_training_learns_planted_winning_champion_and_loads_batch_predictor(
@@ -218,6 +218,18 @@ def test_training_learns_planted_winning_champion_and_loads_batch_predictor(
     assert 1 <= report.best_epoch <= 50
     assert report.metrics["model"]["auc"] is not None
     assert (tmp_path / "model_metrics.json").is_file()
+
+
+def test_train_model_saves_embedding_checkpoint_fields(make_game: Any, tmp_path: Path) -> None:
+    games = [_planted_game(make_game, index, index % 2 == 0) for index in range(24)]
+
+    train_model(games, tmp_path, epochs=1, seed=17, device="cpu")
+
+    checkpoint = torch.load(tmp_path / "model.pt", weights_only=True)
+    assert checkpoint["num_champions"] > 0
+    assert checkpoint["continuous_size"] > 0
+    assert checkpoint["embedding_dim"] == 16
+    assert "input_size" not in checkpoint
 
 
 def test_train_model_takes_multiple_optimizer_steps_per_epoch_with_small_batch_size(
