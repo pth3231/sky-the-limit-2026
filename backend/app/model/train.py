@@ -202,6 +202,7 @@ def _scorer_probabilities(
     champion_names = {
         action.champion_id: action.champion_name for game in train_games for action in game.actions
     }
+    champion_roles = FeatureSpace.fit(train_games).champion_roles
     scorers: dict[tuple[str, str, str], Scorer] = {}
     probabilities: list[float] = []
     for example in examples:
@@ -219,6 +220,7 @@ def _scorer_probabilities(
                 opponent_team_id=game.red_team_id,
                 opponent_team_name=game.red_team_id,
                 our_side="blue",
+                champion_roles=champion_roles,
             )
             scorers[key] = scorer
         blue_picks: list[str] = []

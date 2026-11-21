@@ -161,6 +161,7 @@ class DraftEngine:
             opponent_team_id=opponent.team_id,
             opponent_team_name=opponent.name,
             our_side=request.our_side,
+            champion_roles=self._champion_roles,
         )
 
         if self._predictor is None:

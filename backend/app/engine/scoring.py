@@ -26,11 +26,12 @@ META_CAP = 0.10
 COMFORT_CAP = 0.05
 SYNERGY_CAP = 0.05
 SIDE_CAP = 0.05
+MATCHUP_CAP = 0.05
 LOGISTIC_SLOPE = 1.2
 STRONG_SIGNAL_GAMES = 30
 SOME_SIGNAL_GAMES = 10
 
-_EdgeKind = Literal["meta", "comfort", "synergy"]
+_EdgeKind = Literal["meta", "comfort", "synergy", "matchup"]
 
 
 def smoothed_rate(
@@ -117,6 +118,7 @@ class Scorer:
         opponent_team_id: str,
         opponent_team_name: str,
         our_side: Side,
+        champion_roles: Mapping[str, str | None],
     ) -> None:
         self._stats = stats
         self._names = champion_names
@@ -125,6 +127,7 @@ class Scorer:
         self._opponent_team_id = opponent_team_id
         self._opponent_team_name = opponent_team_name
         self._our_side: Side = our_side
+        self._champion_roles = champion_roles
 
     def _name(self, champion_id: str) -> str:
         return self._names.get(champion_id, champion_id)
@@ -171,11 +174,37 @@ class Scorer:
             partner_id=partner_id,
         )
 
+    def _matchup_edge(self, champion_id: str, opponent_picks: Sequence[str]) -> _Edge | None:
+        role = self._champion_roles.get(champion_id)
+        if role is None:
+            return None
+        opponent_id = next(
+            (pick for pick in opponent_picks if self._champion_roles.get(pick) == role), None
+        )
+        if opponent_id is None:
+            return None
+        record = self._stats.matchup(role, champion_id, opponent_id)
+        if record is None or record.games == 0:
+            return None
+        expected = self._champion_rate(champion_id)
+        edge = _clamp(
+            smoothed_rate(record.wins, record.games, prior=expected) - expected, MATCHUP_CAP
+        )
+        return _Edge(
+            kind="matchup",
+            champion_id=champion_id,
+            edge=edge,
+            wins=record.wins,
+            games=record.games,
+            partner_id=opponent_id,
+        )
+
     def _candidate_edges(
         self,
         team_id: str,
         champion_id: str,
         teammates: Sequence[str],
+        opponents: Sequence[str],
     ) -> list[_Edge]:
         edges = [self._meta_edge(champion_id)]
         comfort = self._comfort_edge(team_id, champion_id)
@@ -185,17 +214,25 @@ class Scorer:
             synergy = self._synergy_edge(champion_id, partner_id)
             if synergy:
                 edges.append(synergy)
+        matchup = self._matchup_edge(champion_id, opponents)
+        if matchup:
+            edges.append(matchup)
         return edges
 
-    def _team_edges(self, team_id: str, picks: Sequence[str]) -> list[_Edge]:
+    def _team_edges(
+        self, team_id: str, picks: Sequence[str], opponents: Sequence[str]
+    ) -> list[_Edge]:
         edges: list[_Edge] = []
         for champion_id in picks:
             edges.append(self._meta_edge(champion_id))
             comfort = self._comfort_edge(team_id, champion_id)
             if comfort:
                 edges.append(comfort)
-        for champion_id, partner_id in combinations(picks, 2):
-            synergy = self._synergy_edge(champion_id, partner_id)
+            matchup = self._matchup_edge(champion_id, opponents)
+            if matchup:
+                edges.append(matchup)
+        for champion_a_id, champion_b_id in combinations(picks, 2):
+            synergy = self._synergy_edge(champion_a_id, champion_b_id)
             if synergy:
                 edges.append(synergy)
         return edges
@@ -208,8 +245,13 @@ class Scorer:
         return edge, wins, games
 
     def _strength_gap(self, our_picks: Sequence[str], opponent_picks: Sequence[str]) -> float:
-        ours = sum(edge.edge for edge in self._team_edges(self._our_team_id, our_picks))
-        theirs = sum(edge.edge for edge in self._team_edges(self._opponent_team_id, opponent_picks))
+        ours = sum(
+            edge.edge for edge in self._team_edges(self._our_team_id, our_picks, opponent_picks)
+        )
+        theirs = sum(
+            edge.edge
+            for edge in self._team_edges(self._opponent_team_id, opponent_picks, our_picks)
+        )
         return self._side_edge()[0] + ours - theirs
 
     def game_win_probability(
@@ -236,6 +278,15 @@ class Scorer:
         if edge.kind == "comfort":
             target = "it" if owner == "candidate" else name
             return f"{team_name} won {edge.wins} of {edge.games} games with {target}"
+        if edge.kind == "matchup":
+            opponent_name = self._name(edge.partner_id or "")
+            verb = "beats" if edge.edge >= 0 else "loses to"
+            subject = {
+                "candidate": f"Lane matchup {verb} their {opponent_name}",
+                "ours": f"Your {name} {verb} their {opponent_name} in lane",
+                "theirs": f"Their {name} {verb} your {opponent_name} in lane",
+            }
+            return f"{subject[owner]} (won {edge.wins} of {edge.games})"
         partner = self._name(edge.partner_id or "")
         quality = "Strong" if edge.edge >= 0 else "Awkward"
         if owner == "candidate":
@@ -267,7 +318,7 @@ class Scorer:
     ) -> Candidate:
         """Score picking ``champion_id`` for us next."""
         probability = self.game_win_probability([*our_picks, champion_id], opponent_picks)
-        edges = self._candidate_edges(self._our_team_id, champion_id, our_picks)
+        edges = self._candidate_edges(self._our_team_id, champion_id, our_picks, opponent_picks)
         factors = self._ordered(
             [self._factor(edge, "candidate", _edge_impact(edge.edge)) for edge in edges]
         )
@@ -306,7 +357,9 @@ class Scorer:
         weight = 0.5 + 0.5 * share
         score = current + threat * weight
 
-        edges = self._candidate_edges(self._opponent_team_id, champion_id, opponent_picks)
+        edges = self._candidate_edges(
+            self._opponent_team_id, champion_id, opponent_picks, our_picks
+        )
         factors = [self._factor(edge, "candidate", _edge_impact(edge.edge)) for edge in edges]
         for index, edge in enumerate(edges):
             if edge.kind == "comfort":
@@ -315,6 +368,11 @@ class Scorer:
             elif edge.kind == "synergy":
                 partner = self._name(edge.partner_id or "")
                 label = f"Pairs with their {partner} (won {edge.wins} of {edge.games} together)"
+                factors[index] = factors[index].model_copy(update={"label": label})
+            elif edge.kind == "matchup":
+                partner = self._name(edge.partner_id or "")
+                verb = "beats" if edge.edge >= 0 else "loses to"
+                label = f"Lane matchup {verb} your {partner} (won {edge.wins} of {edge.games})"
                 factors[index] = factors[index].model_copy(update={"label": label})
         if picks:
             factors.append(
@@ -364,10 +422,10 @@ class Scorer:
         ]
         factors.extend(
             self._factor(edge, "ours", _edge_impact(edge.edge))
-            for edge in self._team_edges(self._our_team_id, our_picks)
+            for edge in self._team_edges(self._our_team_id, our_picks, opponent_picks)
         )
         factors.extend(
             self._factor(edge, "theirs", -_edge_impact(edge.edge))
-            for edge in self._team_edges(self._opponent_team_id, opponent_picks)
+            for edge in self._team_edges(self._opponent_team_id, opponent_picks, our_picks)
         )
         return self._ordered(factors)
