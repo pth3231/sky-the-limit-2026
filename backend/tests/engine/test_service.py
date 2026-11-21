@@ -267,7 +267,12 @@ def test_load_engine_reads_derived_aggregates_and_meta(
 
     assert engine.patches() == ["16.1"]
     assert {champion.champion_id for champion in engine.champion_list()} >= {"c0", "c5"}
-    assert next(champion for champion in engine.champion_list() if champion.champion_id == "c0").portrait_url == portrait_url
+    assert (
+        next(
+            champion for champion in engine.champion_list() if champion.champion_id == "c0"
+        ).portrait_url
+        == portrait_url
+    )
     assert engine.recommend(_request()).recommendation is not None
     assert engine.recommend(_request()).engine == "statistical"
 

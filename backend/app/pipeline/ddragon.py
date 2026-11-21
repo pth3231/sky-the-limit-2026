@@ -101,9 +101,7 @@ def load_portrait_urls(path: Path) -> dict[str, str]:
     if not any(champion.portrait_url for champion in champions.values()):
         champions = fetch_ddragon(path.parent, timeout=1.0)
     return {
-        name: champion.portrait_url
-        for name, champion in champions.items()
-        if champion.portrait_url
+        name: champion.portrait_url for name, champion in champions.items() if champion.portrait_url
     }
 
 

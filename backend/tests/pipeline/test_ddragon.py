@@ -104,14 +104,20 @@ def test_fetch_failure_falls_back_to_empty_metadata(tmp_path: Path, monkeypatch:
     assert ddragon.fetch_ddragon(tmp_path) == {}
 
 
-def test_load_portraits_refreshes_legacy_cache_and_works_offline(tmp_path: Path, monkeypatch: Any) -> None:
+def test_load_portraits_refreshes_legacy_cache_and_works_offline(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     cache = tmp_path / "ddragon.json"
     cache.write_text(json.dumps({"aatrox": {"tags": [], "info": {}}}))
     calls: list[Path] = []
 
     def refresh(path: Path, timeout: float = 3.0) -> dict[str, ddragon.ChampionTraits]:
         calls.append(path)
-        return {"aatrox": ddragon.ChampionTraits(tags=(), info={}, portrait_url="https://example.test/aatrox.png")}
+        return {
+            "aatrox": ddragon.ChampionTraits(
+                tags=(), info={}, portrait_url="https://example.test/aatrox.png"
+            )
+        }
 
     monkeypatch.setattr(ddragon, "fetch_ddragon", refresh)
     assert ddragon.load_portrait_urls(cache) == {"aatrox": "https://example.test/aatrox.png"}

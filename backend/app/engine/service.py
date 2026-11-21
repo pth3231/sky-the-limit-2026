@@ -222,7 +222,8 @@ class DraftEngine:
             if slot_owner(slot, request.our_side) != "us":
                 # Simulate opponent's move using historical tendencies
                 legal = [
-                    cid for cid in self._champion_names
+                    cid
+                    for cid in self._champion_names
                     if cid not in unavailable and cid not in actions
                 ]
                 if not legal:
@@ -243,17 +244,13 @@ class DraftEngine:
 
             # Our move - score all available champions
             legal = [
-                cid for cid in self._champion_names
-                if cid not in unavailable and cid not in actions
+                cid for cid in self._champion_names if cid not in unavailable and cid not in actions
             ]
             if not legal:
                 break
 
             score_fn = scorer.score_pick if slot.action == "pick" else scorer.score_ban
-            candidates = [
-                score_fn(cid, context.our_picks, context.opponent_picks)
-                for cid in legal
-            ]
+            candidates = [score_fn(cid, context.our_picks, context.opponent_picks) for cid in legal]
             candidates.sort(key=lambda c: -c.score)
             best = candidates[0]
 
