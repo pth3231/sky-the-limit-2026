@@ -65,6 +65,11 @@ cleanup PRs:
   `shelf/`, `dataSources/`, `dataSources.local.xml`, `httpRequests/`,
   `queries/`). Never commit a data source or run configuration that embeds
   GRID data, credentials, or absolute paths into the data repo.
+- **`.junie/`, `.air/`, `.run/`** — Junie/Air plan and run-configuration
+  artifacts, same rationale as `.idea/`: Cloud9 confirmed in the hackathon
+  Discord that committing these as JetBrains-tooling evidence is encouraged.
+  Check for secrets or absolute local paths before committing, same as
+  `.idea/`.
 - **`docs/`** — specs (`docs/superpowers/specs/`), implementation plans
   (`docs/superpowers/plans/`), and any other design notes. When a change
   alters a decision, update the relevant spec/plan/`README.md`/`PRODUCT.md`
@@ -83,6 +88,34 @@ Derived artifacts go to an ignored directory. Before every commit:
 - Check `git diff --cached --name-only` and confirm no data-derived file is
   staged.
 - If data was ever committed, stop — do not push — and fix history first.
+
+## Hackathon submission compliance
+
+Rules confirmed by Cloud9/Devpost staff in the hackathon Discord
+(2026-11-18 through 2026-11-21), kept here since they affect how this
+project is built and demoed, not just the data handling already covered
+above and in `AGENTS.md`:
+
+- **No single required AI tool.** The JetBrains-tool requirement is
+  satisfied by using any JetBrains IDE (PyCharm, WebStorm, IntelliJ IDEA,
+  Rider, DataGrip), JetBrains Air, or Junie — not Junie specifically. This
+  project's primary tools are PyCharm and WebStorm.
+- **Declare JetBrains tool use in the final submission** — state how and
+  where each tool was used; Cloud9 verifies this. Committing `.idea/`,
+  `.junie/`, `.air/`, and `.run/` (see "What gets committed" above) is
+  encouraged supporting evidence.
+- **A hosted public demo may serve real statistics/insights derived from
+  the GRID data** — this is the intended use of the data grant, not a
+  violation. A password-protected demo visible only to judges is
+  acceptable. The app must not require a local file upload to function.
+- **Any fabricated/synthetic data shown in a demo must be clearly labeled
+  as such** to the viewer (e.g. this project's frontend "practice mode"
+  already labels itself visibly). Don't substitute synthetic data for real
+  data that was available — that's discouraged, not prohibited, but judges
+  may question it.
+- **Riot Developer API use is allowed alongside GRID data** — see
+  `AGENTS.md` for the key-security and API-approval requirements before
+  adding any Riot API integration.
 
 ## Coding conventions
 
