@@ -133,3 +133,34 @@ def test_feature_space_keeps_vocabulary_fixed_while_history_changes(make_game: A
     assert second_space.champion_roles == {"c2": "bot"}
     assert first_space.role_profiles["c1"]["mid"].damage_share == 0.2
     assert second_space.role_profiles["c2"]["bot"].damage_share == 0.8
+
+
+def test_feature_space_encodes_matchup_win_rate_between_same_role_picks(make_game: Any) -> None:
+    game = make_game(blue_picks=["c1"], red_picks=["c2"]).model_copy(
+        update={
+            "lineups": [
+                PlayerLine(team_id="c9", role="top", champion_id="c1"),
+                PlayerLine(team_id="opp", role="top", champion_id="c2"),
+            ],
+        }
+    )
+    space = FeatureSpace.fit([game])
+    # The first six DRAFT_ORDER slots are bans (blue, red, blue, red, blue, red); the
+    # seventh and eighth are the first blue and red picks. Pad with filler bans so
+    # c1/c2 land in actual pick slots rather than the leading ban slots.
+    state = DraftState(patch="16.1", actions=["b1", "b2", "b3", "b4", "b5", "b6", "c1", "c2"])
+    encoded = space.encode(state)
+
+    per_side_width = 5 + 7 + len(space.tag_names) + 4 + 6 + 1
+    blue_start = 4 * len(space.champion_ids) + 21 + len(space.patches) + 1
+    blue_matchup_index = blue_start + per_side_width - 1
+    red_matchup_index = blue_start + 2 * per_side_width - 1
+
+    assert red_matchup_index == len(encoded) - 1
+    assert encoded[blue_matchup_index] == 1.0  # c1 beat c2 in their one recorded top matchup
+    assert encoded[red_matchup_index] == 0.0  # c2 lost that matchup
+
+    lone_pick_encoded = space.encode(
+        DraftState(patch="16.1", actions=["b1", "b2", "b3", "b4", "b5", "b6", "c1"])
+    )
+    assert lone_pick_encoded[blue_matchup_index] == 0.0  # no opposing top pick yet
