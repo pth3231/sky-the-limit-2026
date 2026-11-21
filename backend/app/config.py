@@ -16,6 +16,7 @@ class _AppSettings(BaseSettings):
         env_file=BACKEND_ENV_FILE,
         env_file_encoding="utf-8",
         populate_by_name=True,
+        extra="ignore",
     )
 
 
