@@ -45,9 +45,22 @@ def _planted_game(make_game: Any, index: int, blue_has_winner: bool) -> GameDraf
 
 
 def test_draft_net_returns_bounded_batch_probabilities() -> None:
-    model = DraftNet(input_size=4, hidden_size=8, dropout=0.1)
+    model = DraftNet(
+        num_champions=10,
+        continuous_size=4,
+        embedding_dim=4,
+        hidden_size=8,
+        dropout=0.1,
+    )
+    empty_slot = torch.full((3, 5), 10, dtype=torch.long)  # sentinel == num_champions
 
-    probabilities = model(torch.zeros((3, 4)))
+    probabilities = model(
+        empty_slot,
+        empty_slot,
+        empty_slot,
+        empty_slot,
+        torch.zeros((3, 4)),
+    )
 
     assert probabilities.shape == (3,)
     assert torch.all(probabilities >= 0)
