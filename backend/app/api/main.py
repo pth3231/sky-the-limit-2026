@@ -67,7 +67,6 @@ def create_app(engine: DraftEngine | None = None) -> FastAPI:
     ) -> RosterResponse:
         """Return the latest verified historical rosters for both teams."""
         return engine.rosters(opponent_team_id)
-
     @app.get("/champions", response_model=list[ChampionSummary])
     def champions(engine: EngineDependency) -> list[ChampionSummary]:
         """List draftable champions."""
