@@ -138,6 +138,7 @@ def test_blend_patches_scales_with_total_records_not_patches_times_subjects() ->
             champions=[],
             sides=SideAggregate(blue_games=0, blue_wins=0, red_games=0, red_wins=0),
             synergies=[],
+            matchups=[],
             team_champions=[],
             teams=teams,
         )
@@ -188,6 +189,7 @@ def test_sum_subject_teams_does_not_resum_the_whole_team_champion_table_per_team
             champions=[],
             sides=SideAggregate(blue_games=0, blue_wins=0, red_games=0, red_wins=0),
             synergies=[],
+            matchups=[],
             team_champions=team_champions,
             teams=teams,
         )
