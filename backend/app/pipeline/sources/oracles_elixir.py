@@ -1,6 +1,9 @@
 """Parse Oracle's Elixir match CSVs into the pipeline's GameDraft shape."""
 
-from collections.abc import Mapping
+import csv
+from collections import OrderedDict
+from collections.abc import Iterable, Mapping
+from pathlib import Path
 
 from app.engine.draft_order import DRAFT_ORDER
 from app.pipeline.dataset import GameDraft
@@ -135,3 +138,33 @@ def build_game(rows: list[Mapping[str, str]], name_to_id: Mapping[str, str]) -> 
         started_at=team_rows["Blue"].get("date", "").strip(),
         lineups=lineups,
     )
+
+
+def parse_oracles_elixir(
+    rows: Iterable[Mapping[str, str]], name_to_id: Mapping[str, str]
+) -> list[GameDraft]:
+    """Group OE rows by game and build every complete game into a GameDraft."""
+    grouped: OrderedDict[str, list[Mapping[str, str]]] = OrderedDict()
+    for row in rows:
+        gameid = row.get("gameid", "").strip()
+        if gameid:
+            grouped.setdefault(gameid, []).append(row)
+
+    games: list[GameDraft] = []
+    for group in grouped.values():
+        if any(row.get("datacompleteness", "").strip().lower() != "complete" for row in group):
+            continue
+        game = build_game(group, name_to_id)
+        if game is not None:
+            games.append(game)
+    return games
+
+
+def load_oracles_elixir(
+    csv_path: Path,
+    champions: Mapping[str, Champion],
+) -> list[GameDraft]:
+    """Read an Oracle's Elixir CSV into GameDrafts using GRID champion ids."""
+    name_to_id = build_champion_id_map(champions)
+    with csv_path.open(newline="", encoding="utf-8-sig") as file:
+        return parse_oracles_elixir(list(csv.DictReader(file)), name_to_id)

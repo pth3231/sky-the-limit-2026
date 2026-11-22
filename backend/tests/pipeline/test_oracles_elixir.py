@@ -1,4 +1,6 @@
+import csv
 from collections.abc import Mapping
+from pathlib import Path
 
 from app.engine.draft_order import DRAFT_ORDER
 from app.pipeline.meta import Champion
@@ -7,7 +9,13 @@ from app.pipeline.sources.oracles_elixir import (
     _number,
     build_champion_id_map,
     build_game,
+    load_oracles_elixir,
+    parse_oracles_elixir,
     resolve_champion_id,
+)
+
+DRAFT_ORDER_PICK_INDEX = next(
+    i for i, slot in enumerate(DRAFT_ORDER) if slot.action == "pick" and slot.side == "blue"
 )
 
 
@@ -123,3 +131,31 @@ def test_build_game_skips_incomplete_draft() -> None:
     rows = _complete_game()
     rows = [row for row in rows if not (row["position"] == "sup" and row["side"] == "Blue")]
     assert build_game(rows, build_champion_id_map({})) is None
+
+
+def test_parse_keeps_complete_games_and_drops_incomplete() -> None:
+    good = _complete_game("good")
+    partial = [row for row in _complete_game("partial") if row["position"] != "sup"]
+    flagged = _complete_game("flagged")
+    for row in flagged:
+        row["datacompleteness"] = "partial"
+
+    games = parse_oracles_elixir([*good, *partial, *flagged], {})
+
+    assert [game.game_id for game in games] == ["good"]
+
+
+def test_load_reads_csv_and_resolves_champions(tmp_path: Path) -> None:
+    rows = _complete_game("g1")
+    csv_path = tmp_path / "oe.csv"
+    fieldnames = sorted({key for row in rows for key in row})
+    with csv_path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    champions = {"Bluetop": Champion(character_id="grid-x", name="Bluetop", games_played=1)}
+
+    games = load_oracles_elixir(csv_path, champions)
+
+    assert len(games) == 1
+    assert games[0].actions[DRAFT_ORDER_PICK_INDEX].champion_id == "grid-x"
