@@ -1,7 +1,10 @@
 import csv
 import json
+import subprocess
+import sys
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from app.engine.draft_order import DRAFT_ORDER
 from app.pipeline.dataset import GameDraft
@@ -201,3 +204,49 @@ def test_count_unmatched_champions_counts_distinct_names_without_grid_match() ->
     # the single known champion "Aatrox", so the distinct unmatched count is positive
     # and stable across games that reuse the same synthetic names.
     assert unmatched > 0
+
+
+def test_module_runs_main_when_invoked_as_a_script(tmp_path: Path, monkeypatch: Any) -> None:
+    """Regression test: `python -m app.pipeline.sources.oracles_elixir` must invoke main().
+
+    A missing `if __name__ == "__main__":` guard makes the CLI silently do nothing when
+    run via `-m` (exit 0, no output, no file write) while every direct call to `main()`
+    still works — easy to miss in review since it only breaks the command-line entrypoint.
+    """
+    rows = _complete_game("g1")
+    csv_path = tmp_path / "oe.csv"
+    fieldnames = sorted({key for row in rows for key in row})
+    with csv_path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    data_dir = tmp_path / "data"
+    (data_dir / "meta").mkdir(parents=True)
+    (data_dir / "meta" / "characters.csv").write_text(
+        "title,character_id,name,games_played\n", encoding="utf-8"
+    )
+    out = tmp_path / "derived"
+    out.mkdir()
+    (out / "drafts.json").write_text("[]", encoding="utf-8")
+
+    monkeypatch.chdir(Path(__file__).resolve().parents[2])
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.pipeline.sources.oracles_elixir",
+            "--csv",
+            str(csv_path),
+            "--data-dir",
+            str(data_dir),
+            "--out",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "unmatched champion" in result.stdout.lower()
+    payload = json.loads((out / "drafts.json").read_text(encoding="utf-8"))
+    assert [item["game_id"] for item in payload] == ["oe:g1"]

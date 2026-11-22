@@ -219,3 +219,7 @@ def main(argv: list[str] | None = None) -> None:
         f"Added {len(oe_games)} Oracle's Elixir games; drafts.json now has {len(merged)}. "
         f"{unmatched_count} unmatched champion name(s) fell back to a normalized id."
     )
+
+
+if __name__ == "__main__":
+    main()
