@@ -340,21 +340,43 @@ def train_model(
     torch = _torch_module()
     from app.model.net import DraftNet
 
+    if verbose:
+        print(f"Splitting {len(games)} games ({split} split)...", flush=True)
     split_fn = _resolve_split(split, seed)
     decided_games = [game for game in games if _is_decided(game)]
     train_games, validation_games = split_fn(decided_games, 0.85)
     if not train_games:
         raise ValueError("At least one decided game with draft actions is required")
     fit_games, stopping_games = split_fn(train_games, 0.85)
+    if verbose:
+        print(
+            f"Split into {len(fit_games)} fit / {len(stopping_games)} stopping / "
+            f"{len(validation_games)} validation games. Building prefix examples...",
+            flush=True,
+        )
     train_examples = _prefix_examples(fit_games)
     if not train_examples:
         raise ValueError("Training games do not contain draft actions")
     stopping_examples = _prefix_examples(stopping_games)
     validation_examples = _prefix_examples(validation_games)
+    if verbose:
+        print(
+            f"Built {len(train_examples)} training examples. Fitting feature space on "
+            f"{len(fit_games)} games...",
+            flush=True,
+        )
     feature_space = FeatureSpace.fit(fit_games, ddragon)
+    if verbose:
+        print(
+            "Encoding training examples with 5-fold out-of-fold features "
+            "(this is the slow step on large datasets)...",
+            flush=True,
+        )
     train_encoded = _out_of_fold_features(train_examples, fit_games, ddragon)
     train_labels = [example.label for example in train_examples]
     train_weights = [example.weight for example in train_examples]
+    if verbose:
+        print("Encoding stopping and validation features...", flush=True)
     stopping_encoded = [feature_space.encode(example.state) for example in stopping_examples]
     stopping_labels = [example.label for example in stopping_examples]
     stopping_weights = [example.weight for example in stopping_examples]
@@ -526,6 +548,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--hidden-size", type=int, default=128)
+    parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument("--weight-decay", type=float, default=1e-2)
+    parser.add_argument("--learning-rate", type=float, default=0.001)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--patience", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     arguments = parser.parse_args(argv)
@@ -540,6 +567,11 @@ def main(argv: list[str] | None = None) -> None:
         output_dir,
         epochs=arguments.epochs,
         hidden_size=arguments.hidden_size,
+        dropout=arguments.dropout,
+        weight_decay=arguments.weight_decay,
+        learning_rate=arguments.learning_rate,
+        batch_size=arguments.batch_size,
+        patience=arguments.patience,
         seed=arguments.seed,
         device=arguments.device,
         ddragon=_read_traits(ddragon_path),

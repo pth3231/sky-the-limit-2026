@@ -100,7 +100,13 @@ def _run_split(
     ddragon: dict[str, Any] | None,
     device: str,
     epochs: int,
+    hidden_size: int,
+    dropout: float,
+    weight_decay: float,
+    verbose: bool = False,
 ) -> SplitResult:
+    if verbose:
+        print(f"\n>>> Training ({strategy} split, seed={seed})...", flush=True)
     report = train_model(
         games,
         output_dir,
@@ -109,7 +115,10 @@ def _run_split(
         device=device,
         split=strategy,
         ddragon=ddragon,
-        verbose=False,
+        hidden_size=hidden_size,
+        dropout=dropout,
+        weight_decay=weight_decay,
+        verbose=verbose,
     )
     model = report.metrics["model"]
     return SplitResult(
@@ -135,9 +144,14 @@ def run_diagnostic(
     ddragon: dict[str, Any] | None = None,
     device: str = "auto",
     epochs: int = 100,
+    hidden_size: int = 128,
+    dropout: float = 0.5,
+    weight_decay: float = 1e-2,
 ) -> None:
     """Print the patch-drift report and the chronological-vs-random AUC comparison."""
+    print(f"=== DATA CEILING DIAGNOSTIC: loaded {len(games)} games, filtering decided ones... ===")
     decided = [game for game in games if game.finished and game.winner_team_id]
+    print(f"Computing chronological split and patch drift over {len(decided)} decided games...")
     train_games, validation_games = time_split(decided)
     drift = patch_drift(train_games, validation_games)
 
@@ -172,19 +186,29 @@ def run_diagnostic(
         ddragon=ddragon,
         device=device,
         epochs=epochs,
+        hidden_size=hidden_size,
+        dropout=dropout,
+        weight_decay=weight_decay,
+        verbose=True,
     )
-    random_results = [
-        _run_split(
-            games,
-            output_dir,
-            strategy="random",
-            seed=seed,
-            ddragon=ddragon,
-            device=device,
-            epochs=epochs,
+    random_results = []
+    for index, seed in enumerate(seeds, start=1):
+        print(f"\n({index}/{len(seeds)} random-split runs)", flush=True)
+        random_results.append(
+            _run_split(
+                games,
+                output_dir,
+                strategy="random",
+                seed=seed,
+                ddragon=ddragon,
+                device=device,
+                epochs=epochs,
+                hidden_size=hidden_size,
+                dropout=dropout,
+                weight_decay=weight_decay,
+                verbose=True,
+            )
         )
-        for seed in seeds
-    ]
     random_auc = _mean([result.model_auc for result in random_results if result.model_auc])
     print(f"{'split':<16}{'model AUC':>11}{'scorer AUC':>12}")
     print(
@@ -212,6 +236,7 @@ def run_diagnostic(
 
     # Retrain production artifacts with the real (chronological) split so the diagnostic
     # does not leave random-split weights in place.
+    print("\n--- Restoring production (chronological) weights ---")
     _run_split(
         games,
         output_dir,
@@ -220,6 +245,10 @@ def run_diagnostic(
         ddragon=ddragon,
         device=device,
         epochs=epochs,
+        verbose=True,
+        hidden_size=hidden_size,
+        dropout=dropout,
+        weight_decay=weight_decay,
     )
 
 
@@ -244,6 +273,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--seeds", type=int, nargs="+", default=[42, 1, 7])
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument("--hidden-size", type=int, default=128)
+    parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument("--weight-decay", type=float, default=1e-2)
     arguments = parser.parse_args(argv)
 
     output_dir = arguments.out or DerivedSettings().derived_dir
@@ -258,6 +290,9 @@ def main(argv: list[str] | None = None) -> None:
         ddragon=_read_json(ddragon_path),
         device=arguments.device,
         epochs=arguments.epochs,
+        hidden_size=arguments.hidden_size,
+        dropout=arguments.dropout,
+        weight_decay=arguments.weight_decay,
     )
 
 
