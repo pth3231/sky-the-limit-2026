@@ -3,6 +3,7 @@
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -254,6 +255,11 @@ class FeatureSpace(BaseModel):
         """Return the stable width of the continuous feature block for this feature space."""
         return len(self.encode(DraftState()).continuous)
 
+    @cached_property
+    def _champion_index(self) -> dict[str, int]:
+        """Champion id -> embedding index, built once per instance instead of per encode() call."""
+        return {champion_id: index for index, champion_id in enumerate(self.champion_ids)}
+
     def _meta_for(self, patch: str, champion_id: str) -> ChampionMeta | None:
         return self.patch_champion_stats.get(patch, {}).get(
             champion_id,
@@ -262,7 +268,7 @@ class FeatureSpace(BaseModel):
 
     def encode(self, state: DraftState) -> EncodedState:
         """Encode a draft state as champion-index slot arrays plus continuous features."""
-        champion_index = {champion_id: index for index, champion_id in enumerate(self.champion_ids)}
+        champion_index = self._champion_index
         sentinel = self.num_champions
         slots: dict[str, list[int]] = {
             "blue_picks": [sentinel] * 5,

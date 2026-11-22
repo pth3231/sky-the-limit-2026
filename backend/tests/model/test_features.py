@@ -208,3 +208,13 @@ def test_encode_places_champion_indices_in_the_matching_slot_group(
     )
     assert encoded_blue_picks == expected_blue_picks
     assert len(encoded.blue_picks) == 5
+
+
+def test_champion_index_is_cached_across_encode_calls(make_game: Any) -> None:
+    games = [make_game(blue_picks=["c0", "c1"], red_picks=["c2", "c3"])]
+    feature_space = FeatureSpace.fit(games)
+
+    first = feature_space._champion_index
+    second = feature_space._champion_index
+
+    assert first is second
