@@ -19,7 +19,7 @@ _INFO_FIELDS: tuple[str, ...] = ("attack", "defense", "magic", "difficulty")
 _META_FIELDS: tuple[str, ...] = ("pick_rate", "ban_rate", "win_rate")
 _TEAM_PRIOR_RATE = 0.5
 _TEAM_PRIOR_GAMES = 10
-_TEAM_RECENT_GAMES_WINDOW = 30
+_TEAM_RECENT_GAMES_WINDOW = 50
 
 
 def _date_key(game: GameDraft) -> float:
