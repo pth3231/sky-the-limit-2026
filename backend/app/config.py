@@ -68,6 +68,7 @@ class Settings(_AppSettings):
         default=DEFAULT_DERIVED_DIR, validation_alias="DRAFT_COACH_DERIVED_DIR"
     )
     cloud9_team_id: str | None = Field(default=None, validation_alias="CLOUD9_TEAM_ID")
+    use_model: bool = Field(default=False, validation_alias="DRAFT_COACH_USE_MODEL")
 
     @field_validator("data_dir")
     @classmethod

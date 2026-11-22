@@ -47,6 +47,26 @@ def test_settings_reads_stl_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert Settings().data_dir == data_dir
 
 
+def test_settings_default_to_scorer_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_dir = tmp_path / "configured-data"
+    (data_dir / "meta").mkdir(parents=True)
+    monkeypatch.setenv("STL_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("DRAFT_COACH_USE_MODEL", raising=False)
+
+    assert Settings().use_model is False
+
+
+def test_settings_enable_model_via_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_dir = tmp_path / "configured-data"
+    (data_dir / "meta").mkdir(parents=True)
+    monkeypatch.setenv("STL_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("DRAFT_COACH_USE_MODEL", "true")
+
+    assert Settings().use_model is True
+
+
 def test_settings_uses_backend_dotenv_file() -> None:
     assert Settings.model_config.get("env_file") == config_module.BACKEND_ENV_FILE
 
