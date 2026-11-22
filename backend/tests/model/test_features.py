@@ -236,12 +236,11 @@ def test_feature_space_encodes_matchup_win_rate_between_same_role_picks(make_gam
     state = DraftState(patch="16.1", actions=["b1", "b2", "b3", "b4", "b5", "b6", "c1", "c2"])
     encoded = space.encode(state)
 
-    per_side_width = 5 + 7 + len(space.tag_names) + 4 + 6 + 1
+    per_side_width = 5 + 7 + len(space.tag_names) + 4 + 6 + 1 + 1
     blue_start = len(DRAFT_ORDER) + 1 + len(space.patches) + 1
-    blue_matchup_index = blue_start + per_side_width - 1
-    red_matchup_index = blue_start + 2 * per_side_width - 1
+    blue_matchup_index = blue_start + per_side_width - 2
+    red_matchup_index = blue_start + 2 * per_side_width - 2
 
-    assert red_matchup_index == len(encoded.continuous) - 1
     # c1 beat c2 in their one recorded top matchup
     assert encoded.continuous[blue_matchup_index] == 1.0
     assert encoded.continuous[red_matchup_index] == 0.0  # c2 lost that matchup
@@ -250,3 +249,27 @@ def test_feature_space_encodes_matchup_win_rate_between_same_role_picks(make_gam
         DraftState(patch="16.1", actions=["b1", "b2", "b3", "b4", "b5", "b6", "c1"])
     )
     assert lone_pick_encoded.continuous[blue_matchup_index] == 0.0  # no opposing top pick yet
+
+
+def test_feature_space_encodes_team_win_rate_as_a_strength_prior(make_game: Any) -> None:
+    strong_games = [make_game(blue="strong", red="filler", winner="blue") for _ in range(12)]
+    weak_games = [make_game(blue="weak", red="filler", winner="red") for _ in range(12)]
+    space = FeatureSpace.fit([*strong_games, *weak_games])
+
+    per_side_width = 5 + 7 + len(space.tag_names) + 4 + 6 + 1 + 1
+    blue_start = len(DRAFT_ORDER) + 1 + len(space.patches) + 1
+    blue_team_index = blue_start + per_side_width - 1
+    red_team_index = blue_start + 2 * per_side_width - 1
+
+    strong_encoded = space.encode(
+        DraftState(patch="16.1", blue_team_id="strong", red_team_id="filler")
+    )
+    weak_encoded = space.encode(DraftState(patch="16.1", blue_team_id="weak", red_team_id="filler"))
+    unknown_encoded = space.encode(
+        DraftState(patch="16.1", blue_team_id="never-seen", red_team_id="filler")
+    )
+
+    assert red_team_index == len(strong_encoded.continuous) - 1
+    assert strong_encoded.continuous[blue_team_index] > 0.5
+    assert weak_encoded.continuous[blue_team_index] < 0.5
+    assert unknown_encoded.continuous[blue_team_index] == 0.5

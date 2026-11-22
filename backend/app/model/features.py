@@ -16,6 +16,8 @@ from app.pipeline.drafts import Role
 _ROLES: tuple[Role, ...] = ("top", "jungle", "mid", "bot", "support")
 _INFO_FIELDS: tuple[str, ...] = ("attack", "defense", "magic", "difficulty")
 _META_FIELDS: tuple[str, ...] = ("pick_rate", "ban_rate", "win_rate")
+_TEAM_PRIOR_RATE = 0.5
+_TEAM_PRIOR_GAMES = 10
 
 
 class DraftState(BaseModel):
@@ -25,6 +27,8 @@ class DraftState(BaseModel):
 
     patch: str = "unknown"
     actions: list[str] = Field(default_factory=list)
+    blue_team_id: str | None = None
+    red_team_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +122,7 @@ class FeatureSpace(BaseModel):
     global_champion_stats: dict[str, ChampionMeta]
     role_profiles: dict[str, dict[Role, RoleProfile]]
     matchup_win_rates: dict[str, float] = Field(default_factory=dict)
+    team_win_rates: dict[str, float] = Field(default_factory=dict)
 
     @classmethod
     def fit(
@@ -138,6 +143,7 @@ class FeatureSpace(BaseModel):
         role_counts: dict[str, Counter[Role]] = {}
         role_values: dict[str, dict[Role, list[float]]] = {}
         matchup_counts: dict[tuple[Role, str, str], list[int]] = {}
+        team_counts: dict[str, list[int]] = {}
 
         normalized_traits: dict[str, ChampionTraits] = {}
         for name, value in (ddragon or {}).items():
@@ -163,6 +169,11 @@ class FeatureSpace(BaseModel):
                 game.blue_team_id,
                 game.red_team_id,
             }
+            if decided:
+                for team_id in (game.blue_team_id, game.red_team_id):
+                    team_tally = team_counts.setdefault(team_id, [0, 0])
+                    team_tally[0] += 1
+                    team_tally[1] += team_id == game.winner_team_id
             for action in game.actions:
                 champions.add(action.champion_id)
                 champion_names.setdefault(action.champion_id, action.champion_name)
@@ -258,6 +269,10 @@ class FeatureSpace(BaseModel):
             f"{role}|{champion_id}|{opponent_id}": wins / games
             for (role, champion_id, opponent_id), (games, wins) in matchup_counts.items()
         }
+        team_win_rates = {
+            team_id: (wins + _TEAM_PRIOR_RATE * _TEAM_PRIOR_GAMES) / (games + _TEAM_PRIOR_GAMES)
+            for team_id, (games, wins) in team_counts.items()
+        }
 
         return cls(
             champion_ids=sorted(champions),
@@ -272,6 +287,7 @@ class FeatureSpace(BaseModel):
             global_champion_stats=_champion_meta(global_counts, global_game_count),
             role_profiles=role_profiles,
             matchup_win_rates=matchup_win_rates,
+            team_win_rates=team_win_rates,
         )
 
     @property
@@ -404,6 +420,11 @@ class FeatureSpace(BaseModel):
                 if rate is not None:
                     matchup_rates.append(rate)
             continuous.append(sum(matchup_rates) / len(matchup_rates) if matchup_rates else 0.0)
+
+            team_id = state.blue_team_id if side == "blue" else state.red_team_id
+            continuous.append(
+                self.team_win_rates.get(team_id, _TEAM_PRIOR_RATE) if team_id else _TEAM_PRIOR_RATE
+            )
 
         return EncodedState(
             blue_picks=slots["blue_picks"],

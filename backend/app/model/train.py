@@ -151,6 +151,8 @@ def _prefix_examples(games: list[GameDraft]) -> list[_PrefixExample]:
                     state=DraftState(
                         patch=game.patch or "unknown",
                         actions=action_ids[:prefix_length],
+                        blue_team_id=game.blue_team_id,
+                        red_team_id=game.red_team_id,
                     ),
                     label=label,
                     weight=prefix_length / len(DRAFT_ORDER),
