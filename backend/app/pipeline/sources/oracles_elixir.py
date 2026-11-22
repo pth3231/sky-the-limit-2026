@@ -2,8 +2,10 @@
 
 from collections.abc import Mapping
 
+from app.engine.draft_order import DRAFT_ORDER
+from app.pipeline.dataset import GameDraft
 from app.pipeline.ddragon import normalize_champion_name
-from app.pipeline.drafts import Role
+from app.pipeline.drafts import DraftAction, PlayerLine, Role
 from app.pipeline.meta import Champion
 
 OE_POSITION_ROLES: dict[str, Role] = {
@@ -34,3 +36,102 @@ def resolve_champion_id(name: str, name_to_id: Mapping[str, str]) -> str:
     """Resolve an OE champion name to a GRID id, falling back to its normalized key."""
     normalized = normalize_champion_name(name)
     return name_to_id.get(normalized, normalized)
+
+
+_POSITION_ORDER = ("top", "jng", "mid", "bot", "sup")
+
+
+def _team_id(row: Mapping[str, str]) -> str:
+    return row.get("teamid", "").strip() or normalize_champion_name(row.get("teamname", ""))
+
+
+def build_game(rows: list[Mapping[str, str]], name_to_id: Mapping[str, str]) -> GameDraft | None:
+    """Build one OE game into a GameDraft, or None if its draft is incomplete."""
+    team_rows = {
+        row["side"].strip().capitalize(): row
+        for row in rows
+        if row.get("position", "").strip().lower() == "team"
+    }
+    if set(team_rows) != {"Blue", "Red"}:
+        return None
+
+    players: dict[str, list[Mapping[str, str]]] = {"Blue": [], "Red": []}
+    for row in rows:
+        position = row.get("position", "").strip().lower()
+        side = row.get("side", "").strip().capitalize()
+        if position in OE_POSITION_ROLES and side in players:
+            players[side].append(row)
+
+    picks: dict[str, list[Mapping[str, str]]] = {}
+    bans: dict[str, list[str]] = {}
+    for side in ("Blue", "Red"):
+        ordered = sorted(
+            players[side],
+            key=lambda row: _POSITION_ORDER.index(row["position"].strip().lower()),
+        )
+        side_bans = [team_rows[side].get(f"ban{index}", "").strip() for index in range(1, 6)]
+        if len(ordered) != 5 or any(not ban for ban in side_bans):
+            return None
+        picks[side] = ordered
+        bans[side] = side_bans
+
+    team_ids = {side: _team_id(team_rows[side]) for side in ("Blue", "Red")}
+    winner_side = next(
+        (side for side in ("Blue", "Red") if team_rows[side].get("result", "").strip() == "1"),
+        None,
+    )
+
+    pick_cursor = {"Blue": 0, "Red": 0}
+    ban_cursor = {"Blue": 0, "Red": 0}
+    actions: list[DraftAction] = []
+    for slot in DRAFT_ORDER:
+        side = "Blue" if slot.side == "blue" else "Red"
+        if slot.action == "ban":
+            name = bans[side][ban_cursor[side]]
+            ban_cursor[side] += 1
+        else:
+            name = picks[side][pick_cursor[side]]["champion"].strip()
+            pick_cursor[side] += 1
+        actions.append(
+            DraftAction(
+                sequence_number=slot.index + 1,
+                action_type=slot.action,
+                team_id=team_ids[side],
+                champion_id=resolve_champion_id(name, name_to_id),
+                champion_name=name,
+            )
+        )
+
+    lineups: list[PlayerLine] = []
+    for side in ("Blue", "Red"):
+        for row in picks[side]:
+            team_kills = _number(row.get("teamkills"))
+            participations = _number(row.get("kills")) + _number(row.get("assists"))
+            role: Role = OE_POSITION_ROLES[row["position"].strip().lower()]
+            lineups.append(
+                PlayerLine(
+                    team_id=team_ids[side],
+                    role=role,
+                    champion_id=resolve_champion_id(row["champion"].strip(), name_to_id),
+                    damage_share=_number(row.get("damageshare")),
+                    damage_taken=_number(row.get("totaldamagetaken")),
+                    vision_score=_number(row.get("visionscore")),
+                    gold_share=_number(row.get("earnedgoldshare")),
+                    kill_participation=participations / team_kills if team_kills else 0.0,
+                )
+            )
+
+    gameid = rows[0]["gameid"]
+    return GameDraft(
+        game_id=gameid,
+        series_id=gameid,
+        game_number=1,
+        patch=(team_rows["Blue"].get("patch", "").strip() or "unknown"),
+        finished=True,
+        winner_team_id=team_ids[winner_side] if winner_side else None,
+        blue_team_id=team_ids["Blue"],
+        red_team_id=team_ids["Red"],
+        actions=actions,
+        started_at=team_rows["Blue"].get("date", "").strip(),
+        lineups=lineups,
+    )
