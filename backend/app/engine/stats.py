@@ -191,16 +191,17 @@ def _sum_teams(patches: Iterable[PatchAggregate]) -> dict[str, TeamAggregate]:
 def _sum_subject_champions(
     patches: list[PatchAggregate],
 ) -> tuple[dict[str, ChampionAggregate], dict[str, tuple[str, ...]]]:
-    champion_ids = {item.champion_id for patch in patches for item in patch.champions}
+    patch_indexes = [
+        (patch, {item.champion_id: item for item in patch.champions}) for patch in patches
+    ]
+    champion_ids = {champion_id for _, index in patch_indexes for champion_id in index}
     summed: dict[str, ChampionAggregate] = {}
     champion_patch_map: dict[str, tuple[str, ...]] = {}
     for champion_id in champion_ids:
         subject_patches: list[PatchAggregate] = []
         games = 0
-        for patch in patches:
-            record = next(
-                (item for item in patch.champions if item.champion_id == champion_id), None
-            )
+        for patch, index in patch_indexes:
+            record = index.get(champion_id)
             if record is None:
                 continue
             subject_patches.append(patch)
@@ -219,15 +220,16 @@ def _sum_subject_teams(
     dict[tuple[str, str], TeamChampionAggregate],
     dict[str, tuple[str, ...]],
 ]:
-    team_ids = {item.team_id for patch in patches for item in patch.teams}
+    patch_indexes = [(patch, {item.team_id: item for item in patch.teams}) for patch in patches]
+    team_ids = {team_id for _, index in patch_indexes for team_id in index}
     teams: dict[str, TeamAggregate] = {}
     team_champions: dict[tuple[str, str], TeamChampionAggregate] = {}
     team_patch_map: dict[str, tuple[str, ...]] = {}
     for team_id in team_ids:
         subject_patches: list[PatchAggregate] = []
         games = 0
-        for patch in patches:
-            record = next((item for item in patch.teams if item.team_id == team_id), None)
+        for patch, index in patch_indexes:
+            record = index.get(team_id)
             if record is None:
                 continue
             subject_patches.append(patch)
