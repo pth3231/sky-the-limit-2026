@@ -39,16 +39,26 @@ class WinPredictor:
             raise ValueError(f"Invalid model checkpoint: {path}")
         try:
             feature_space = FeatureSpace.model_validate(checkpoint["feature_space"])
-            input_size = int(checkpoint["input_size"])
+            num_champions = int(checkpoint["num_champions"])
+            continuous_size = int(checkpoint["continuous_size"])
+            embedding_dim = int(checkpoint["embedding_dim"])
             hidden_size = int(checkpoint["hidden_size"])
             dropout = float(checkpoint["dropout"])
             state_dict = checkpoint["state_dict"]
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError(f"Invalid model checkpoint: {path}") from error
-        if input_size != feature_space.input_size:
-            raise ValueError("Model input size does not match the saved feature space")
+        if num_champions != feature_space.num_champions:
+            raise ValueError("Model champion count does not match the saved feature space")
+        if continuous_size != feature_space.continuous_size:
+            raise ValueError("Model continuous feature size does not match the saved feature space")
 
-        model = DraftNet(input_size, hidden_size=hidden_size, dropout=dropout)
+        model = DraftNet(
+            num_champions,
+            continuous_size,
+            embedding_dim=embedding_dim,
+            hidden_size=hidden_size,
+            dropout=dropout,
+        )
         model.load_state_dict(state_dict)
         model.eval()
         model = model.to(device)
@@ -64,10 +74,24 @@ class WinPredictor:
         if not states:
             return []
         torch = _torch_module()
-        features = [self.feature_space.encode(state) for state in states]
-        tensor = torch.tensor(features, dtype=torch.float32, device=self._device)
+        encoded = [self.feature_space.encode(state) for state in states]
+        blue_picks = torch.tensor(
+            [state.blue_picks for state in encoded], dtype=torch.long, device=self._device
+        )
+        blue_bans = torch.tensor(
+            [state.blue_bans for state in encoded], dtype=torch.long, device=self._device
+        )
+        red_picks = torch.tensor(
+            [state.red_picks for state in encoded], dtype=torch.long, device=self._device
+        )
+        red_bans = torch.tensor(
+            [state.red_bans for state in encoded], dtype=torch.long, device=self._device
+        )
+        continuous = torch.tensor(
+            [state.continuous for state in encoded], dtype=torch.float32, device=self._device
+        )
         with torch.inference_mode():
-            predictions = self._model(tensor)
+            predictions = self._model(blue_picks, blue_bans, red_picks, red_bans, continuous)
         # Move to CPU for Python float conversion if on GPU
         if self._device != "cpu":
             predictions = predictions.cpu()

@@ -2,6 +2,7 @@
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,6 +24,17 @@ class DraftState(BaseModel):
 
     patch: str = "unknown"
     actions: list[str] = Field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class EncodedState:
+    """Champion-index slot arrays plus continuous aggregate features for one draft state."""
+
+    blue_picks: list[int]
+    blue_bans: list[int]
+    red_picks: list[int]
+    red_bans: list[int]
+    continuous: list[float] = field(default_factory=list)
 
 
 class ChampionMeta(BaseModel):
@@ -233,9 +245,14 @@ class FeatureSpace(BaseModel):
         )
 
     @property
-    def input_size(self) -> int:
-        """Return the stable encoded vector width for this fitted feature space."""
-        return len(self.encode(DraftState()))
+    def num_champions(self) -> int:
+        """Return the fitted champion vocabulary size (the embedding padding index)."""
+        return len(self.champion_ids)
+
+    @property
+    def continuous_size(self) -> int:
+        """Return the stable width of the continuous feature block for this feature space."""
+        return len(self.encode(DraftState()).continuous)
 
     def _meta_for(self, patch: str, champion_id: str) -> ChampionMeta | None:
         return self.patch_champion_stats.get(patch, {}).get(
@@ -243,22 +260,29 @@ class FeatureSpace(BaseModel):
             self.global_champion_stats.get(champion_id),
         )
 
-    def encode(self, state: DraftState) -> list[float]:
-        """Encode draft actions with blue/red, pick/ban, role, trait, and meta features."""
+    def encode(self, state: DraftState) -> EncodedState:
+        """Encode a draft state as champion-index slot arrays plus continuous features."""
         champion_index = {champion_id: index for index, champion_id in enumerate(self.champion_ids)}
-        champion_count = len(self.champion_ids)
-        presence = [0.0] * (4 * champion_count)
+        sentinel = self.num_champions
+        slots: dict[str, list[int]] = {
+            "blue_picks": [sentinel] * 5,
+            "blue_bans": [sentinel] * 5,
+            "red_picks": [sentinel] * 5,
+            "red_bans": [sentinel] * 5,
+        }
+        slot_cursors = {key: 0 for key in slots}
         picks: dict[str, list[str]] = {"blue": [], "red": []}
         bans: dict[str, list[str]] = {"blue": [], "red": []}
 
         for index, champion_id in enumerate(state.actions[: len(DRAFT_ORDER)]):
             slot = DRAFT_ORDER[index]
-            side_index = 0 if slot.side == "blue" else 1
-            action_index = 0 if slot.action == "pick" else 1
-            channel = side_index * 2 + action_index
-            champion_position = champion_index.get(champion_id)
-            if champion_position is not None:
-                presence[channel * champion_count + champion_position] = 1.0
+            group_key = f"{slot.side}_{'picks' if slot.action == 'pick' else 'bans'}"
+            cursor = slot_cursors[group_key]
+            if cursor < len(slots[group_key]):
+                champion_position = champion_index.get(champion_id)
+                if champion_position is not None:
+                    slots[group_key][cursor] = champion_position
+                slot_cursors[group_key] = cursor + 1
             selected = picks if slot.action == "pick" else bans
             selected[slot.side].append(champion_id)
 
@@ -269,7 +293,7 @@ class FeatureSpace(BaseModel):
             self.patches.index(state.patch) if state.patch in self.patches else len(self.patches)
         )
         patch_features[patch_index] = 1.0
-        features = [*presence, *action_count, *patch_features]
+        continuous = [*action_count, *patch_features]
         patch_key = state.patch.strip() or "unknown"
 
         for side in ("blue", "red"):
@@ -279,7 +303,7 @@ class FeatureSpace(BaseModel):
                 for champion_id in current_picks
                 if champion_id in self.champion_roles
             )
-            features.extend(role_counts[role] / 5.0 for role in _ROLES)
+            continuous.extend(role_counts[role] / 5.0 for role in _ROLES)
 
             profiles: list[RoleProfile] = []
             for champion_id in current_picks:
@@ -298,16 +322,16 @@ class FeatureSpace(BaseModel):
                 [profile.gold_share for profile in profiles],
                 [profile.kill_participation for profile in profiles],
             )
-            features.extend(
+            continuous.extend(
                 sum(values) / len(values) if values else 0.0 for values in profile_values
             )
 
             side_traits = [self.champion_traits.get(champion_id) for champion_id in current_picks]
             side_traits = [traits for traits in side_traits if traits is not None]
-            features.extend(
+            continuous.extend(
                 sum(tag in traits.tags for traits in side_traits) / 5.0 for tag in self.tag_names
             )
-            features.extend(
+            continuous.extend(
                 sum(traits.info.get(field, 0.0) for traits in side_traits)
                 / (10.0 * len(side_traits))
                 if side_traits
@@ -316,12 +340,18 @@ class FeatureSpace(BaseModel):
             )
 
             for selected in (current_picks, bans[side]):
-                for field in _META_FIELDS:
+                for meta_field in _META_FIELDS:
                     values = [
-                        getattr(meta, field)
+                        getattr(meta, meta_field)
                         for champion_id in selected
                         if (meta := self._meta_for(patch_key, champion_id)) is not None
                     ]
-                    features.append(sum(values) / len(values) if values else 0.0)
+                    continuous.append(sum(values) / len(values) if values else 0.0)
 
-        return features
+        return EncodedState(
+            blue_picks=slots["blue_picks"],
+            blue_bans=slots["blue_bans"],
+            red_picks=slots["red_picks"],
+            red_bans=slots["red_bans"],
+            continuous=continuous,
+        )
