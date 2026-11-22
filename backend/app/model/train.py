@@ -6,7 +6,7 @@ import json
 import math
 import random
 from collections import defaultdict, deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -95,6 +95,46 @@ def time_split(
         [game for game in ordered_games if game.series_id in training_series],
         [game for game in ordered_games if game.series_id not in training_series],
     )
+
+
+def random_split(
+    games: list[GameDraft], train_fraction: float = 0.85, *, seed: int = 42
+) -> tuple[list[GameDraft], list[GameDraft]]:
+    """Split by series with random assignment, keeping each series intact.
+
+    Unlike ``time_split`` this ignores chronology, so train and validation are
+    drawn from the same patch/meta distribution. It exists to probe the data
+    ceiling (how much of the low validation AUC is distribution shift versus
+    genuinely weak signal), not for production training.
+    """
+    if not 0.0 < train_fraction < 1.0:
+        raise ValueError("train_fraction must be between 0 and 1")
+    ordered_series = _ordered_series(games)
+    if len(ordered_series) < 2:
+        return sorted(games, key=lambda game: (_date_key(game), game.game_number, game.game_id)), []
+    shuffled = list(ordered_series)
+    random.Random(seed).shuffle(shuffled)
+    split_at = min(max(int(len(shuffled) * train_fraction), 1), len(shuffled) - 1)
+    training_series = set(shuffled[:split_at])
+    ordered_games = sorted(
+        games,
+        key=lambda game: (_date_key(game), game.series_id, game.game_number, game.game_id),
+    )
+    return (
+        [game for game in ordered_games if game.series_id in training_series],
+        [game for game in ordered_games if game.series_id not in training_series],
+    )
+
+
+_SplitFn = Callable[[list[GameDraft], float], tuple[list[GameDraft], list[GameDraft]]]
+
+
+def _resolve_split(strategy: str, seed: int) -> _SplitFn:
+    if strategy == "chronological":
+        return time_split
+    if strategy == "random":
+        return lambda games, train_fraction: random_split(games, train_fraction, seed=seed)
+    raise ValueError(f"Unsupported split strategy: {strategy!r} (use 'chronological' or 'random')")
 
 
 def _prefix_examples(games: list[GameDraft]) -> list[_PrefixExample]:
@@ -281,22 +321,27 @@ def train_model(
     patience: int = 20,
     seed: int = 42,
     device: str = "auto",
+    split: str = "chronological",
     ddragon: dict[str, Any] | None = None,
     verbose: bool = False,
 ) -> TrainingReport:
-    """Train on decided games, validate on the newest time window, and save local artifacts.
+    """Train on decided games, validate on a held-out split, and save local artifacts.
 
+    ``split`` selects how games are partitioned: ``"chronological"`` (default, production)
+    reserves the newest series for validation; ``"random"`` assigns series at random, which
+    removes patch/meta drift and is used only to probe the achievable data ceiling.
     All splits keep series together. Training examples use series-grouped out-of-fold history;
     stopping and validation features use a feature space fitted on the earlier fitting window.
     """
     torch = _torch_module()
     from app.model.net import DraftNet
 
+    split_fn = _resolve_split(split, seed)
     decided_games = [game for game in games if _is_decided(game)]
-    train_games, validation_games = time_split(decided_games)
+    train_games, validation_games = split_fn(decided_games, 0.85)
     if not train_games:
         raise ValueError("At least one decided game with draft actions is required")
-    fit_games, stopping_games = time_split(train_games)
+    fit_games, stopping_games = split_fn(train_games, 0.85)
     train_examples = _prefix_examples(fit_games)
     if not train_examples:
         raise ValueError("Training games do not contain draft actions")

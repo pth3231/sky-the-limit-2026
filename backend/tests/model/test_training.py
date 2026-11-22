@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any
 
+import pytest
 import torch
 
 from app.engine.draft_order import DRAFT_ORDER
@@ -10,6 +11,7 @@ from app.model.predictor import WinPredictor
 from app.model.train import (
     _out_of_fold_features,
     _prefix_examples,
+    random_split,
     time_split,
     train_model,
 )
@@ -125,6 +127,66 @@ def test_time_split_orders_unknown_timestamps_deterministically(make_game: Any) 
     assert [game.series_id for game in reversed_validation] == [
         game.series_id for game in validation
     ]
+
+
+def test_random_split_keeps_each_series_intact(make_game: Any) -> None:
+    games = [
+        make_game().model_copy(update={"series_id": f"series-{index % 4}", "game_number": index})
+        for index in range(12)
+    ]
+
+    train, validation = random_split(games, train_fraction=0.5, seed=7)
+
+    train_series = {game.series_id for game in train}
+    validation_series = {game.series_id for game in validation}
+    assert train_series.isdisjoint(validation_series)
+    assert train and validation
+
+
+def test_random_split_is_deterministic_and_seed_sensitive(make_game: Any) -> None:
+    games = [
+        make_game().model_copy(update={"series_id": f"series-{index}", "game_number": 1})
+        for index in range(20)
+    ]
+
+    def partition(split: tuple[list[Any], list[Any]]) -> tuple[frozenset[str], frozenset[str]]:
+        return (
+            frozenset(game.game_id for game in split[0]),
+            frozenset(game.game_id for game in split[1]),
+        )
+
+    assert partition(random_split(games, seed=1)) == partition(random_split(games, seed=1))
+    assert partition(random_split(games, seed=1)) != partition(random_split(games, seed=2))
+
+
+def test_random_split_respects_train_fraction(make_game: Any) -> None:
+    games = [
+        make_game().model_copy(update={"series_id": f"series-{index}", "game_number": 1})
+        for index in range(20)
+    ]
+
+    train, validation = random_split(games, train_fraction=0.8, seed=3)
+
+    assert len({game.series_id for game in train}) == 16
+    assert len({game.series_id for game in validation}) == 4
+
+
+def test_train_model_accepts_random_split_strategy(make_game: Any, tmp_path: Path) -> None:
+    games = [_planted_game(make_game, index, index % 2 == 0) for index in range(24)]
+
+    report = train_model(
+        games, tmp_path, epochs=3, hidden_size=8, seed=17, device="cpu", split="random"
+    )
+
+    assert report.metrics["model"]["auc"] is not None
+    assert report.validation_games >= 1
+
+
+def test_train_model_rejects_unknown_split_strategy(make_game: Any, tmp_path: Path) -> None:
+    games = [_planted_game(make_game, index, index % 2 == 0) for index in range(24)]
+
+    with pytest.raises(ValueError, match="split"):
+        train_model(games, tmp_path, epochs=1, seed=17, device="cpu", split="banana")
 
 
 def test_out_of_fold_features_exclude_outcomes_and_performance_from_their_series(
