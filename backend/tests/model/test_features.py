@@ -273,3 +273,27 @@ def test_feature_space_encodes_team_win_rate_as_a_strength_prior(make_game: Any)
     assert strong_encoded.continuous[blue_team_index] > 0.5
     assert weak_encoded.continuous[blue_team_index] < 0.5
     assert unknown_encoded.continuous[blue_team_index] == 0.5
+
+
+def test_team_win_rate_reflects_recent_form_over_stale_history(make_game: Any) -> None:
+    # More old losses than the recency window, so an all-time average would stay well
+    # below 0.5; only a recency-limited rate can land above it.
+    old_losses = [
+        make_game(blue="roster-changed", red="filler", winner="red").model_copy(
+            update={"started_at": f"2024-{month:02d}-{day:02d}T12:00:00Z"}
+        )
+        for month in range(1, 9)
+        for day in range(1, 14)
+    ]
+    recent_wins = [
+        make_game(blue="roster-changed", red="filler", winner="blue").model_copy(
+            update={"started_at": f"2026-01-{day:02d}T12:00:00Z"}
+        )
+        for day in range(1, 31)
+    ]
+    space = FeatureSpace.fit([*old_losses, *recent_wins])
+
+    rate = space.team_win_rates["roster-changed"]
+
+    # Dominated by 5 recent wins, not diluted by 24 old (pre-roster-change) losses.
+    assert rate > 0.5

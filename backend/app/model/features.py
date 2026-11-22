@@ -3,6 +3,7 @@
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from functools import cached_property
 from typing import Any
 
@@ -18,6 +19,17 @@ _INFO_FIELDS: tuple[str, ...] = ("attack", "defense", "magic", "difficulty")
 _META_FIELDS: tuple[str, ...] = ("pick_rate", "ban_rate", "win_rate")
 _TEAM_PRIOR_RATE = 0.5
 _TEAM_PRIOR_GAMES = 10
+_TEAM_RECENT_GAMES_WINDOW = 30
+
+
+def _date_key(game: GameDraft) -> float:
+    try:
+        value = datetime.fromisoformat(game.started_at.replace("Z", "+00:00"))
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.timestamp()
+    except ValueError:
+        return float("-inf")
 
 
 class DraftState(BaseModel):
@@ -143,7 +155,7 @@ class FeatureSpace(BaseModel):
         role_counts: dict[str, Counter[Role]] = {}
         role_values: dict[str, dict[Role, list[float]]] = {}
         matchup_counts: dict[tuple[Role, str, str], list[int]] = {}
-        team_counts: dict[str, list[int]] = {}
+        team_game_log: dict[str, list[tuple[float, bool]]] = {}
 
         normalized_traits: dict[str, ChampionTraits] = {}
         for name, value in (ddragon or {}).items():
@@ -171,9 +183,9 @@ class FeatureSpace(BaseModel):
             }
             if decided:
                 for team_id in (game.blue_team_id, game.red_team_id):
-                    team_tally = team_counts.setdefault(team_id, [0, 0])
-                    team_tally[0] += 1
-                    team_tally[1] += team_id == game.winner_team_id
+                    team_game_log.setdefault(team_id, []).append(
+                        (_date_key(game), team_id == game.winner_team_id)
+                    )
             for action in game.actions:
                 champions.add(action.champion_id)
                 champion_names.setdefault(action.champion_id, action.champion_name)
@@ -269,10 +281,15 @@ class FeatureSpace(BaseModel):
             f"{role}|{champion_id}|{opponent_id}": wins / games
             for (role, champion_id, opponent_id), (games, wins) in matchup_counts.items()
         }
-        team_win_rates = {
-            team_id: (wins + _TEAM_PRIOR_RATE * _TEAM_PRIOR_GAMES) / (games + _TEAM_PRIOR_GAMES)
-            for team_id, (games, wins) in team_counts.items()
-        }
+        team_win_rates: dict[str, float] = {}
+        for team_id, entries in team_game_log.items():
+            recent = sorted(entries, key=lambda entry: entry[0], reverse=True)
+            recent = recent[:_TEAM_RECENT_GAMES_WINDOW]
+            games = len(recent)
+            wins = sum(1 for _, won in recent if won)
+            team_win_rates[team_id] = (wins + _TEAM_PRIOR_RATE * _TEAM_PRIOR_GAMES) / (
+                games + _TEAM_PRIOR_GAMES
+            )
 
         return cls(
             champion_ids=sorted(champions),
