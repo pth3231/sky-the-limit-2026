@@ -117,6 +117,7 @@ class FeatureSpace(BaseModel):
     patch_champion_stats: dict[str, dict[str, ChampionMeta]]
     global_champion_stats: dict[str, ChampionMeta]
     role_profiles: dict[str, dict[Role, RoleProfile]]
+    matchup_win_rates: dict[str, float] = Field(default_factory=dict)
 
     @classmethod
     def fit(
@@ -136,6 +137,7 @@ class FeatureSpace(BaseModel):
         global_game_count = 0
         role_counts: dict[str, Counter[Role]] = {}
         role_values: dict[str, dict[Role, list[float]]] = {}
+        matchup_counts: dict[tuple[Role, str, str], list[int]] = {}
 
         normalized_traits: dict[str, ChampionTraits] = {}
         for name, value in (ddragon or {}).items():
@@ -203,6 +205,27 @@ class FeatureSpace(BaseModel):
                     player.vision_score,
                 )
 
+            lineup_by_role: dict[Role, dict[str, str]] = {}
+            for player in game.lineups:
+                if player.role is None:
+                    continue
+                lineup_by_role.setdefault(player.role, {})[player.team_id] = player.champion_id
+            if decided:
+                for role, by_team in lineup_by_role.items():
+                    blue_champion = by_team.get(game.blue_team_id)
+                    red_champion = by_team.get(game.red_team_id)
+                    if blue_champion is None or red_champion is None:
+                        continue
+                    blue_won = game.winner_team_id == game.blue_team_id
+                    forward = matchup_counts.setdefault((role, blue_champion, red_champion), [0, 0])
+                    forward[0] += 1
+                    forward[1] += blue_won
+                    backward = matchup_counts.setdefault(
+                        (role, red_champion, blue_champion), [0, 0]
+                    )
+                    backward[0] += 1
+                    backward[1] += not blue_won
+
         champion_traits: dict[str, ChampionTraits] = {}
         for champion_id, name in champion_names.items():
             traits = normalized_traits.get(normalize_champion_name(name))
@@ -231,6 +254,11 @@ class FeatureSpace(BaseModel):
                     kill_participation=values[7] / games if games else 0.0,
                 )
 
+        matchup_win_rates = {
+            f"{role}|{champion_id}|{opponent_id}": wins / games
+            for (role, champion_id, opponent_id), (games, wins) in matchup_counts.items()
+        }
+
         return cls(
             champion_ids=sorted(champions),
             patches=sorted(patch for patch in vocabulary_patches if patch != "unknown"),
@@ -243,6 +271,7 @@ class FeatureSpace(BaseModel):
             },
             global_champion_stats=_champion_meta(global_counts, global_game_count),
             role_profiles=role_profiles,
+            matchup_win_rates=matchup_win_rates,
         )
 
     @property
@@ -353,6 +382,28 @@ class FeatureSpace(BaseModel):
                         if (meta := self._meta_for(patch_key, champion_id)) is not None
                     ]
                     continuous.append(sum(values) / len(values) if values else 0.0)
+
+            opponent_side = "red" if side == "blue" else "blue"
+            opponent_picks = picks[opponent_side]
+            matchup_rates: list[float] = []
+            for champion_id in current_picks:
+                champion_role = self.champion_roles.get(champion_id)
+                if champion_role is None:
+                    continue
+                opponent_id = next(
+                    (
+                        cid
+                        for cid in opponent_picks
+                        if self.champion_roles.get(cid) == champion_role
+                    ),
+                    None,
+                )
+                if opponent_id is None:
+                    continue
+                rate = self.matchup_win_rates.get(f"{champion_role}|{champion_id}|{opponent_id}")
+                if rate is not None:
+                    matchup_rates.append(rate)
+            continuous.append(sum(matchup_rates) / len(matchup_rates) if matchup_rates else 0.0)
 
         return EncodedState(
             blue_picks=slots["blue_picks"],

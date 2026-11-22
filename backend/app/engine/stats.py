@@ -9,6 +9,7 @@ from app.engine.errors import UnknownPatchError
 from app.engine.models import Side
 from app.pipeline.aggregates import (
     ChampionAggregate,
+    ChampionMatchupAggregate,
     ChampionPairAggregate,
     PatchAggregate,
     TeamAggregate,
@@ -33,6 +34,7 @@ class BlendedStats(BaseModel):
     champions: Mapping[str, ChampionAggregate]
     champion_patch_map: Mapping[str, tuple[str, ...]]
     pairs: Mapping[tuple[str, str], ChampionPairAggregate]
+    matchups: Mapping[tuple[str, str, str], ChampionMatchupAggregate]
     team_champions: Mapping[tuple[str, str], TeamChampionAggregate]
     teams: Mapping[str, TeamAggregate]
     team_patch_map: Mapping[str, tuple[str, ...]]
@@ -45,6 +47,12 @@ class BlendedStats(BaseModel):
         """Return same-team counts for an unordered champion pair, or ``None`` without data."""
         first, second = sorted((champion_a_id, champion_b_id))
         return self.pairs.get((first, second))
+
+    def matchup(
+        self, role: str, champion_id: str, opponent_champion_id: str
+    ) -> ChampionMatchupAggregate | None:
+        """Return a champion's per-role record against a specific opposing champion."""
+        return self.matchups.get((role, champion_id, opponent_champion_id))
 
     def team_champion(self, team_id: str, champion_id: str) -> TeamChampionAggregate | None:
         """Return a team's history with a champion, or ``None`` without data."""
@@ -160,6 +168,24 @@ def _combine_champions(records: list[ChampionAggregate]) -> ChampionAggregate:
             }
         )
     return combined
+
+
+def _sum_matchups(
+    patches: Iterable[PatchAggregate],
+) -> dict[tuple[str, str, str], ChampionMatchupAggregate]:
+    summed: dict[tuple[str, str, str], ChampionMatchupAggregate] = {}
+    for patch in patches:
+        for item in patch.matchups:
+            key = (item.role, item.champion_id, item.opponent_champion_id)
+            previous = summed.get(key)
+            summed[key] = (
+                item
+                if previous is None
+                else previous.model_copy(
+                    update={"games": previous.games + item.games, "wins": previous.wins + item.wins}
+                )
+            )
+    return summed
 
 
 def _combine_teams(records: list[TeamAggregate]) -> TeamAggregate:
@@ -289,6 +315,7 @@ def blend_patches(
         champions=champions,
         champion_patch_map=champion_patch_map,
         pairs=_sum_pairs(selected),
+        matchups=_sum_matchups(selected),
         team_champions=team_champions,
         teams=teams,
         team_patch_map=team_patch_map,
