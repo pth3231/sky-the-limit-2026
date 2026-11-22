@@ -43,6 +43,21 @@ def resolve_champion_id(name: str, name_to_id: Mapping[str, str]) -> str:
     return name_to_id.get(normalized, normalized)
 
 
+def count_unmatched_champions(games: list[GameDraft], name_to_id: Mapping[str, str]) -> int:
+    """Count distinct champion names in `games` with no entry in the GRID id map.
+
+    These champions fell back to their normalized name as an id in `resolve_champion_id`,
+    so they don't share an embedding slot with any GRID champion of the same name.
+    """
+    unmatched = {
+        action.champion_name
+        for game in games
+        for action in game.actions
+        if normalize_champion_name(action.champion_name) not in name_to_id
+    }
+    return len(unmatched)
+
+
 _POSITION_ORDER = ("top", "jng", "mid", "bot", "sup")
 
 
@@ -181,7 +196,9 @@ def main(argv: list[str] | None = None) -> None:
     arguments = parser.parse_args(argv)
 
     champions = load_champions(arguments.data_dir)
+    name_to_id = build_champion_id_map(champions)
     oe_games = load_oracles_elixir(arguments.csv, champions)
+    unmatched_count = count_unmatched_champions(oe_games, name_to_id)
 
     drafts_path = arguments.out / "drafts.json"
     existing: list[GameDraft] = []
@@ -198,4 +215,7 @@ def main(argv: list[str] | None = None) -> None:
         json.dumps([game.model_dump(mode="json") for game in merged], indent=0) + "\n",
         encoding="utf-8",
     )
-    print(f"Added {len(oe_games)} Oracle's Elixir games; drafts.json now has {len(merged)}.")
+    print(
+        f"Added {len(oe_games)} Oracle's Elixir games; drafts.json now has {len(merged)}. "
+        f"{unmatched_count} unmatched champion name(s) fell back to a normalized id."
+    )

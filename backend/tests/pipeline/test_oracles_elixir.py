@@ -11,6 +11,7 @@ from app.pipeline.sources.oracles_elixir import (
     _number,
     build_champion_id_map,
     build_game,
+    count_unmatched_champions,
     load_oracles_elixir,
     main,
     parse_oracles_elixir,
@@ -182,3 +183,21 @@ def test_main_appends_oe_games_to_existing_drafts(tmp_path, capsys, monkeypatch)
     payload = json.loads((out / "drafts.json").read_text(encoding="utf-8"))
     games = [GameDraft.model_validate(item) for item in payload]
     assert [game.game_id for game in games] == ["oe:g1"]
+    assert "unmatched champion" in capsys.readouterr().out.lower()
+
+
+def test_count_unmatched_champions_counts_distinct_names_without_grid_match() -> None:
+    champions = {"Aatrox": Champion(character_id="grid-aatrox", name="Aatrox", games_played=1)}
+    name_to_id = build_champion_id_map(champions)
+    games = [
+        build_game(_complete_game("g1"), name_to_id),
+        build_game(_complete_game("g2"), name_to_id),
+    ]
+    assert all(game is not None for game in games)
+
+    unmatched = count_unmatched_champions(games, name_to_id)  # type: ignore[arg-type]
+
+    # Every champion/ban name in _complete_game's synthetic rows is unmatched against
+    # the single known champion "Aatrox", so the distinct unmatched count is positive
+    # and stable across games that reuse the same synthetic names.
+    assert unmatched > 0
