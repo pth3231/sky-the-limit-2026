@@ -247,6 +247,7 @@ def _scorer_probabilities(
     champion_names = {
         action.champion_id: action.champion_name for game in train_games for action in game.actions
     }
+    blended_by_patch: dict[str | None, Any] = {}
     scorers: dict[tuple[str, str, str], Scorer] = {}
     probabilities: list[float] = []
     for example in examples:
@@ -255,7 +256,10 @@ def _scorer_probabilities(
         scorer = scorers.get(key)
         if scorer is None:
             patch = game.patch if game.patch in aggregates else None
-            stats = blend_patches(aggregates, patch=patch)
+            stats = blended_by_patch.get(patch)
+            if stats is None:
+                stats = blend_patches(aggregates, patch=patch)
+                blended_by_patch[patch] = stats
             scorer = Scorer(
                 stats,
                 champion_names=champion_names,

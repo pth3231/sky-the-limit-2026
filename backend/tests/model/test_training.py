@@ -464,3 +464,62 @@ def test_train_model_uses_weighted_loss_without_crashing(make_game: Any, tmp_pat
     report = train_model(games, tmp_path, epochs=3, hidden_size=8, seed=17, device="cpu")
 
     assert report.metrics["model"]["auc"] is not None
+
+
+def test_scorer_probabilities_caches_blend_patches_by_patch_not_by_team_pair(
+    make_game: Any, monkeypatch: Any
+) -> None:
+    """Regression test: blend_patches depends only on `patch`, not on team identity.
+
+    Calling it fresh for every (patch, team, team) combination wastes work proportional to
+    the number of distinct team pairs, not the number of distinct patches — on datasets with
+    many teams and a long patch history this made validation-metric computation dramatically
+    slower and more memory-hungry than necessary.
+    """
+    from app.model import train as train_module
+
+    games = []
+    for index in range(6):
+        blue_wins = index % 2 == 0
+        blue_team_id, red_team_id = f"team-{index}", f"opp-{index}"
+        game = _planted_game(make_game, index, blue_wins)
+        actions = [
+            action.model_copy(
+                update={
+                    "team_id": blue_team_id if action.team_id == "c9" else red_team_id,
+                }
+            )
+            for action in game.actions
+        ]
+        games.append(
+            game.model_copy(
+                update={
+                    "blue_team_id": blue_team_id,
+                    "red_team_id": red_team_id,
+                    "winner_team_id": blue_team_id if blue_wins else red_team_id,
+                    "actions": actions,
+                }
+            )
+        )
+
+    all_examples = _prefix_examples(games)
+    full_draft_length = len(DRAFT_ORDER)
+    examples = [
+        example for example in all_examples if len(example.state.actions) == full_draft_length
+    ]
+    assert len(examples) == len(games)
+
+    call_count = 0
+    original_blend_patches = train_module.blend_patches
+
+    def counting_blend_patches(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        return original_blend_patches(*args, **kwargs)
+
+    monkeypatch.setattr(train_module, "blend_patches", counting_blend_patches)
+
+    train_module._scorer_probabilities(examples, games)
+
+    distinct_patches = len({game.patch for game in games})
+    assert call_count <= distinct_patches
