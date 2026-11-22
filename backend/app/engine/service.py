@@ -395,8 +395,15 @@ def load_engine(
     data_dir: Path,
     our_team_id: str | None,
     min_games: int = DEFAULT_MIN_GAMES,
+    *,
+    use_model: bool = True,
 ) -> DraftEngine:
-    """Load ``aggregates.json`` and LoL metadata into a ready ``DraftEngine``."""
+    """Load ``aggregates.json`` and LoL metadata into a ready ``DraftEngine``.
+
+    With ``use_model`` disabled the trained network is never loaded and the engine serves
+    the statistical scorer, which currently out-predicts the near-random network. Enable it
+    (``DRAFT_COACH_USE_MODEL``) once the network earns its place against the scorer.
+    """
     aggregates_path = derived_dir / "aggregates.json"
     if not aggregates_path.is_file():
         raise FileNotFoundError(
@@ -407,7 +414,7 @@ def load_engine(
     champions = load_champions(data_dir)
     predictor = None
     model_path = derived_dir / "model.pt"
-    if model_path.is_file():
+    if use_model and model_path.is_file():
         try:
             predictor = WinPredictor.load(model_path)
         except (ImportError, OSError, RuntimeError, TypeError, ValueError):

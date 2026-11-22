@@ -291,6 +291,44 @@ def test_load_engine_reads_derived_aggregates_and_meta(
     assert model_engine.recommend(_request(ourSide="red")).engine == "model"
 
 
+def test_load_engine_skips_model_when_use_model_disabled(
+    tmp_path: Path, synthetic_drafts: list[GameDraft], monkeypatch: Any
+) -> None:
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    aggregates = compute_aggregates(synthetic_drafts)
+    (derived / "aggregates.json").write_text(
+        json.dumps({patch: item.model_dump(mode="json") for patch, item in aggregates.items()}),
+        encoding="utf-8",
+    )
+    meta = tmp_path / "data" / "meta"
+    meta.mkdir(parents=True)
+    _write_csv(
+        meta / "characters.csv",
+        [{"title": "lol", "character_id": "c0", "name": "Champ 0", "games_played": "1"}],
+    )
+    _write_csv(
+        meta / "teams.csv",
+        [
+            {"title": "lol", "team_id": "c9", "name": "Cloud9 Kia"},
+            {"title": "lol", "team_id": "opp", "name": "Rivals"},
+        ],
+    )
+    (derived / "model.pt").touch()
+    loaded_paths: list[Path] = []
+
+    def fake_load(_: type[WinPredictor], path: Path) -> ConstantPredictor:
+        loaded_paths.append(path)
+        return ConstantPredictor()
+
+    monkeypatch.setattr(WinPredictor, "load", classmethod(fake_load))
+
+    engine = load_engine(derived, tmp_path / "data", None, min_games=1, use_model=False)
+
+    assert loaded_paths == []
+    assert engine.recommend(_request(ourSide="red")).engine == "statistical"
+
+
 def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=list(rows[0]))
