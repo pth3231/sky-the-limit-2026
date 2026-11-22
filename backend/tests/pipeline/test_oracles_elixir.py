@@ -1,8 +1,10 @@
 import csv
+import json
 from collections.abc import Mapping
 from pathlib import Path
 
 from app.engine.draft_order import DRAFT_ORDER
+from app.pipeline.dataset import GameDraft
 from app.pipeline.meta import Champion
 from app.pipeline.sources.oracles_elixir import (
     OE_POSITION_ROLES,
@@ -10,6 +12,7 @@ from app.pipeline.sources.oracles_elixir import (
     build_champion_id_map,
     build_game,
     load_oracles_elixir,
+    main,
     parse_oracles_elixir,
     resolve_champion_id,
 )
@@ -142,7 +145,7 @@ def test_parse_keeps_complete_games_and_drops_incomplete() -> None:
 
     games = parse_oracles_elixir([*good, *partial, *flagged], {})
 
-    assert [game.game_id for game in games] == ["good"]
+    assert [game.game_id for game in games] == ["oe:good"]
 
 
 def test_load_reads_csv_and_resolves_champions(tmp_path: Path) -> None:
@@ -159,3 +162,23 @@ def test_load_reads_csv_and_resolves_champions(tmp_path: Path) -> None:
 
     assert len(games) == 1
     assert games[0].actions[DRAFT_ORDER_PICK_INDEX].champion_id == "grid-x"
+
+
+def test_main_appends_oe_games_to_existing_drafts(tmp_path, capsys, monkeypatch) -> None:
+    rows = _complete_game("g1")
+    csv_path = tmp_path / "oe.csv"
+    fieldnames = sorted({key for row in rows for key in row})
+    with csv_path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    out = tmp_path / "derived"
+    out.mkdir()
+    (out / "drafts.json").write_text("[]", encoding="utf-8")
+
+    monkeypatch.setattr("app.pipeline.sources.oracles_elixir.load_champions", lambda _data_dir: {})
+    main(["--csv", str(csv_path), "--data-dir", str(tmp_path), "--out", str(out)])
+
+    payload = json.loads((out / "drafts.json").read_text(encoding="utf-8"))
+    games = [GameDraft.model_validate(item) for item in payload]
+    assert [game.game_id for game in games] == ["oe:g1"]

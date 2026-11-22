@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,100 @@ def _planted_game(make_game: Any, index: int, blue_has_winner: bool) -> GameDraf
             "started_at": f"2026-10-{index + 1:02d}T12:00:00Z",
         }
     )
+
+
+def _oe_player_row(gid, side, pos, champ, **stats):
+    row = {
+        "gameid": gid,
+        "datacompleteness": "complete",
+        "date": "2026-11-01 10:00:00",
+        "patch": "16.20",
+        "side": side,
+        "position": pos,
+        "teamname": f"{side} Team",
+        "teamid": f"oe-{side.lower()}-{gid}",
+        "champion": champ,
+        "kills": "0",
+        "assists": "0",
+        "teamkills": "10",
+        "damageshare": "0.2",
+        "totaldamagetaken": "15000",
+        "visionscore": "30",
+        "earnedgoldshare": "0.2",
+        "result": "1" if side == "Blue" else "0",
+    }
+    row.update({key: str(value) for key, value in stats.items()})
+    return row
+
+
+def _oe_team_row(gid, side, bans, result):
+    row = {
+        "gameid": gid,
+        "datacompleteness": "complete",
+        "date": "2026-11-01 10:00:00",
+        "patch": "16.20",
+        "side": side,
+        "position": "team",
+        "teamname": f"{side} Team",
+        "teamid": f"oe-{side.lower()}-{gid}",
+        "champion": "",
+        "result": result,
+        "kills": "10",
+        "assists": "0",
+        "teamkills": "10",
+        "damageshare": "0",
+        "totaldamagetaken": "0",
+        "visionscore": "0",
+        "earnedgoldshare": "0",
+    }
+    for index, ban in enumerate(bans, start=1):
+        row[f"ban{index}"] = ban
+    return row
+
+
+def _oe_complete_game(gameid: str, *, blue_wins: bool) -> list[Mapping[str, str]]:
+    positions = ("top", "jng", "mid", "bot", "sup")
+    rows: list[Mapping[str, str]] = []
+    for side in ("Blue", "Red"):
+        for pos in positions:
+            rows.append(_oe_player_row(gameid, side, pos, f"{gameid}-{side}-{pos}"))
+    blue_result = "1" if blue_wins else "0"
+    red_result = "0" if blue_wins else "1"
+    rows.append(
+        _oe_team_row(
+            gameid,
+            "Blue",
+            [f"{gameid}-Bb{index}" for index in range(1, 6)],
+            blue_result,
+        )
+    )
+    rows.append(
+        _oe_team_row(
+            gameid,
+            "Red",
+            [f"{gameid}-Rb{index}" for index in range(1, 6)],
+            red_result,
+        )
+    )
+    return rows
+
+
+def test_train_model_runs_on_mixed_grid_and_oe_synthetic_games(
+    make_game: Any, tmp_path: Path
+) -> None:
+    from app.pipeline.sources.oracles_elixir import build_champion_id_map, build_game
+
+    grid = [_planted_game(make_game, index, index % 2 == 0) for index in range(12)]
+    oe = []
+    for index in range(12):
+        rows = _oe_complete_game(f"m{index}", blue_wins=index % 2 == 0)
+        game = build_game(rows, build_champion_id_map({}))
+        assert game is not None
+        oe.append(game)
+
+    report = train_model([*grid, *oe], tmp_path, epochs=2, hidden_size=8, seed=11, device="cpu")
+
+    assert report.metrics["model"]["auc"] is not None
 
 
 def test_draft_net_returns_bounded_batch_probabilities() -> None:

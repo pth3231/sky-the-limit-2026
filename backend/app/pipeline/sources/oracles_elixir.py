@@ -1,6 +1,8 @@
 """Parse Oracle's Elixir match CSVs into the pipeline's GameDraft shape."""
 
+import argparse
 import csv
+import json
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -9,7 +11,7 @@ from app.engine.draft_order import DRAFT_ORDER
 from app.pipeline.dataset import GameDraft
 from app.pipeline.ddragon import normalize_champion_name
 from app.pipeline.drafts import DraftAction, PlayerLine, Role
-from app.pipeline.meta import Champion
+from app.pipeline.meta import Champion, load_champions
 
 OE_POSITION_ROLES: dict[str, Role] = {
     "top": "top",
@@ -124,7 +126,7 @@ def build_game(rows: list[Mapping[str, str]], name_to_id: Mapping[str, str]) -> 
                 )
             )
 
-    gameid = rows[0]["gameid"]
+    gameid = "oe:" + rows[0]["gameid"].strip()
     return GameDraft(
         game_id=gameid,
         series_id=gameid,
@@ -168,3 +170,32 @@ def load_oracles_elixir(
     name_to_id = build_champion_id_map(champions)
     with csv_path.open(newline="", encoding="utf-8-sig") as file:
         return parse_oracles_elixir(list(csv.DictReader(file)), name_to_id)
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Merge an Oracle's Elixir CSV into the local drafts.json training set."""
+    parser = argparse.ArgumentParser(description="Add Oracle's Elixir games to drafts.json.")
+    parser.add_argument("--csv", type=Path, required=True)
+    parser.add_argument("--data-dir", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    arguments = parser.parse_args(argv)
+
+    champions = load_champions(arguments.data_dir)
+    oe_games = load_oracles_elixir(arguments.csv, champions)
+
+    drafts_path = arguments.out / "drafts.json"
+    existing: list[GameDraft] = []
+    if drafts_path.is_file():
+        existing = [
+            GameDraft.model_validate(item)
+            for item in json.loads(drafts_path.read_text(encoding="utf-8"))
+        ]
+    by_id = {game.game_id: game for game in existing}
+    for game in oe_games:
+        by_id[game.game_id] = game
+    merged = list(by_id.values())
+    drafts_path.write_text(
+        json.dumps([game.model_dump(mode="json") for game in merged], indent=0) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Added {len(oe_games)} Oracle's Elixir games; drafts.json now has {len(merged)}.")
