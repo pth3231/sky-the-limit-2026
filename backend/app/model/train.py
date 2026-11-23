@@ -240,26 +240,6 @@ def _metrics(labels: list[float], probabilities: list[float]) -> dict[str, float
     return {"accuracy": accuracy / len(labels), "auc": auc, "log_loss": log_loss}
 
 
-def _is_better_stopping_checkpoint(
-    candidate_auc: float | None,
-    candidate_loss: float,
-    best_auc: float | None,
-    best_loss: float,
-) -> bool:
-    """Return True if the candidate epoch should replace the current best checkpoint.
-
-    A defined-AUC candidate wins once no epoch has a real best_auc yet, or by beating
-    best_auc (ties broken on lower loss). An undefined-AUC candidate can only win while
-    best_auc is still undefined too, compared on loss alone — once any epoch establishes a
-    real best_auc, later undefined-AUC epochs are never selected again.
-    """
-    if candidate_auc is not None:
-        if best_auc is None or candidate_auc > best_auc:
-            return True
-        return candidate_auc == best_auc and candidate_loss < best_loss
-    return best_auc is None and candidate_loss < best_loss
-
-
 def _scorer_probabilities(
     examples: list[_PrefixExample], train_games: list[GameDraft]
 ) -> list[float]:

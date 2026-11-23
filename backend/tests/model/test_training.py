@@ -523,36 +523,3 @@ def test_scorer_probabilities_caches_blend_patches_by_patch_not_by_team_pair(
 
     distinct_patches = len({game.patch for game in games})
     assert call_count <= distinct_patches
-
-
-def test_is_better_stopping_checkpoint_prefers_higher_auc_over_lower_loss() -> None:
-    from app.model.train import _is_better_stopping_checkpoint
-
-    # Candidate has worse (higher) loss but better AUC than the current best: AUC wins.
-    assert _is_better_stopping_checkpoint(0.60, 0.70, 0.55, 0.65) is True
-    # Candidate has better (lower) loss but worse AUC than the current best: AUC still wins,
-    # so the lower-loss-but-non-discriminative candidate is correctly rejected.
-    assert _is_better_stopping_checkpoint(0.50, 0.60, 0.55, 0.65) is False
-
-
-def test_is_better_stopping_checkpoint_breaks_auc_ties_on_lower_loss() -> None:
-    from app.model.train import _is_better_stopping_checkpoint
-
-    assert _is_better_stopping_checkpoint(0.6, 0.60, 0.6, 0.65) is True
-    assert _is_better_stopping_checkpoint(0.6, 0.70, 0.6, 0.65) is False
-
-
-def test_is_better_stopping_checkpoint_falls_back_to_loss_when_auc_always_undefined() -> None:
-    from app.model.train import _is_better_stopping_checkpoint
-
-    assert _is_better_stopping_checkpoint(None, 0.60, None, 0.65) is True
-    assert _is_better_stopping_checkpoint(None, 0.70, None, 0.65) is False
-
-
-def test_is_better_stopping_checkpoint_never_prefers_undefined_auc_once_real_auc_seen() -> None:
-    from app.model.train import _is_better_stopping_checkpoint
-
-    # best_auc is already a real float; a later undefined-AUC candidate must never win,
-    # even with a much lower loss — this is the exact rule that keeps AUC-based and
-    # loss-based epochs from being compared against each other.
-    assert _is_better_stopping_checkpoint(None, 0.10, 0.6, 0.65) is False
