@@ -48,12 +48,9 @@ class DraftState(BaseModel):
 
 @dataclass(frozen=True)
 class EncodedState:
-    """Champion-index slot arrays plus continuous aggregate features for one draft state."""
+    """Champion-index draft sequence plus continuous aggregate features for one draft state."""
 
-    blue_picks: list[int]
-    blue_bans: list[int]
-    red_picks: list[int]
-    red_bans: list[int]
+    draft_sequence: list[int]
     continuous: list[float] = field(default_factory=list)
 
 
@@ -360,28 +357,16 @@ class FeatureSpace(BaseModel):
         return scorer.game_win_probability(picks["blue"], picks["red"])
 
     def encode(self, state: DraftState) -> EncodedState:
-        """Encode a draft state as champion-index slot arrays plus continuous features."""
+        """Encode a draft state as a champion-index draft sequence plus continuous features."""
         champion_index = self._champion_index
         sentinel = self.num_champions
-        slots: dict[str, list[int]] = {
-            "blue_picks": [sentinel] * 5,
-            "blue_bans": [sentinel] * 5,
-            "red_picks": [sentinel] * 5,
-            "red_bans": [sentinel] * 5,
-        }
-        slot_cursors = {key: 0 for key in slots}
+        sequence = [sentinel] * len(DRAFT_ORDER)
         picks: dict[str, list[str]] = {"blue": [], "red": []}
         bans: dict[str, list[str]] = {"blue": [], "red": []}
 
         for index, champion_id in enumerate(state.actions[: len(DRAFT_ORDER)]):
             slot = DRAFT_ORDER[index]
-            group_key = f"{slot.side}_{'picks' if slot.action == 'pick' else 'bans'}"
-            cursor = slot_cursors[group_key]
-            if cursor < len(slots[group_key]):
-                champion_position = champion_index.get(champion_id)
-                if champion_position is not None:
-                    slots[group_key][cursor] = champion_position
-                slot_cursors[group_key] = cursor + 1
+            sequence[index] = champion_index.get(champion_id, sentinel)
             selected = picks if slot.action == "pick" else bans
             selected[slot.side].append(champion_id)
 
@@ -477,9 +462,6 @@ class FeatureSpace(BaseModel):
         continuous.append(self._scorer_probability(state, picks))
 
         return EncodedState(
-            blue_picks=slots["blue_picks"],
-            blue_bans=slots["blue_bans"],
-            red_picks=slots["red_picks"],
-            red_bans=slots["red_bans"],
+            draft_sequence=sequence,
             continuous=continuous,
         )
