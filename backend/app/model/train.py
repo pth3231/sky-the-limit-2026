@@ -440,10 +440,12 @@ def train_model(
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     best_loss = float("inf")
+    best_auc: float | None = None
     best_epoch = epochs
     best_state: dict[str, Any] | None = None
     train_size = labels_tensor.shape[0]
     recent_stopping_losses: deque[float] = deque(maxlen=_STOPPING_SMOOTHING_WINDOW)
+    recent_stopping_aucs: deque[float] = deque(maxlen=_STOPPING_SMOOTHING_WINDOW)
     for epoch in range(1, epochs + 1):
         model.train()
         permutation = torch.randperm(train_size, device=target_device)
@@ -481,10 +483,21 @@ def train_model(
                 (stopping_per_example_loss * stopping_weights_tensor).sum()
                 / stopping_weights_tensor.sum().clamp_min(1e-8)
             )
+            stopping_auc = _metrics(
+                stopping_labels, stopping_probabilities.detach().cpu().tolist()
+            )["auc"]
         recent_stopping_losses.append(stopping_loss)
         smoothed_stopping_loss = sum(recent_stopping_losses) / len(recent_stopping_losses)
-        is_best = smoothed_stopping_loss < best_loss
+        smoothed_stopping_auc: float | None = None
+        if stopping_auc is not None:
+            recent_stopping_aucs.append(stopping_auc)
+            smoothed_stopping_auc = sum(recent_stopping_aucs) / len(recent_stopping_aucs)
+        is_best = _is_better_stopping_checkpoint(
+            smoothed_stopping_auc, smoothed_stopping_loss, best_auc, best_loss
+        )
         if is_best:
+            if smoothed_stopping_auc is not None:
+                best_auc = smoothed_stopping_auc
             best_loss = smoothed_stopping_loss
             best_epoch = epoch
             best_state = {
@@ -492,9 +505,10 @@ def train_model(
             }
         if verbose:
             marker = " (best)" if is_best else ""
+            auc_text = "n/a" if stopping_auc is None else f"{stopping_auc:.4f}"
             print(
                 f"Epoch {epoch}/{epochs}: train_loss={train_loss:.4f} "
-                f"stopping_loss={stopping_loss:.4f}{marker}"
+                f"stopping_loss={stopping_loss:.4f} stopping_auc={auc_text}{marker}"
             )
         if not is_best and epoch - best_epoch >= patience:
             if verbose:
