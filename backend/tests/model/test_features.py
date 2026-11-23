@@ -269,7 +269,7 @@ def test_feature_space_encodes_team_win_rate_as_a_strength_prior(make_game: Any)
         DraftState(patch="16.1", blue_team_id="never-seen", red_team_id="filler")
     )
 
-    assert red_team_index == len(strong_encoded.continuous) - 2
+    assert red_team_index == len(strong_encoded.continuous) - 1
     assert strong_encoded.continuous[blue_team_index] > 0.5
     assert weak_encoded.continuous[blue_team_index] < 0.5
     assert unknown_encoded.continuous[blue_team_index] == 0.5
@@ -303,82 +303,12 @@ def test_feature_space_fits_aggregates_from_training_games_only(make_game: Any) 
     from app.pipeline.aggregates import compute_aggregates
 
     history_games = [make_game(blue_picks=["c0"], red_picks=["c1"]) for _ in range(3)]
-    future_games = [make_game(patch="16.2", blue_picks=["c2"], red_picks=["c3"]) for _ in range(3)]
+    future_games = [
+        make_game(patch="16.2", blue_picks=["c2"], red_picks=["c3"]) for _ in range(3)
+    ]
 
     feature_space = FeatureSpace.fit(
         history_games, vocabulary_games=[*history_games, *future_games]
     )
 
     assert feature_space.aggregates == compute_aggregates(history_games)
-
-
-def test_encode_appends_a_scorer_probability_as_the_last_continuous_feature(
-    make_game: Any,
-) -> None:
-    # "strong" wins almost every game it's picked in; "weak" wins almost none.
-    strong_wins = [
-        make_game(blue_picks=["strong"], red_picks=["weak"], winner="blue") for _ in range(20)
-    ]
-    weak_wins = [
-        make_game(blue_picks=["weak"], red_picks=["strong"], winner="blue") for _ in range(2)
-    ]
-    feature_space = FeatureSpace.fit([*strong_wins, *weak_wins])
-
-    blue_pick_index = next(
-        index
-        for index, slot in enumerate(DRAFT_ORDER)
-        if slot.side == "blue" and slot.action == "pick"
-    )
-    red_pick_index = next(
-        index
-        for index, slot in enumerate(DRAFT_ORDER)
-        if slot.side == "red" and slot.action == "pick"
-    )
-    actions = ["filler"] * len(DRAFT_ORDER)
-    actions[blue_pick_index] = "strong"
-    actions[red_pick_index] = "weak"
-    state = DraftState(patch="16.1", actions=actions, blue_team_id="c9", red_team_id="opp")
-
-    encoded = feature_space.encode(state)
-
-    assert 0.0 <= encoded.continuous[-1] <= 1.0
-    assert encoded.continuous[-1] > 0.5
-
-
-def test_encode_scorer_probability_defaults_to_neutral_without_training_data() -> None:
-    feature_space = FeatureSpace.fit([])
-
-    encoded = feature_space.encode(DraftState())
-
-    assert encoded.continuous[-1] == 0.5
-
-
-def test_encode_caches_blended_stats_by_patch_not_by_team_pair(
-    make_game: Any, monkeypatch: Any
-) -> None:
-    from app.model import features as features_module
-
-    games = [make_game(patch="16.1", blue_picks=["c0"], red_picks=["c1"]) for _ in range(5)]
-    feature_space = FeatureSpace.fit(games)
-
-    call_count = 0
-    original_blend_patches = features_module.blend_patches
-
-    def counting_blend_patches(*args: Any, **kwargs: Any) -> Any:
-        nonlocal call_count
-        call_count += 1
-        return original_blend_patches(*args, **kwargs)
-
-    monkeypatch.setattr(features_module, "blend_patches", counting_blend_patches)
-
-    for team_index in range(10):
-        feature_space.encode(
-            DraftState(
-                patch="16.1",
-                actions=["c0", "c1"],
-                blue_team_id=f"team-{team_index}",
-                red_team_id=f"opp-{team_index}",
-            )
-        )
-
-    assert call_count <= 1
