@@ -296,12 +296,19 @@ def _resolve_device(torch: Any, device: str) -> Any:
 
 def _stack_encoded(
     torch: Any, encoded_states: Sequence[EncodedState], device: Any
-) -> tuple[Any, Any]:
-    """Stack a batch of EncodedState into the two tensors DraftNet.forward expects."""
+) -> tuple[Any, Any, Any, Any, Any]:
+    """Stack a batch of EncodedState into the five tensors DraftNet.forward expects."""
     return (
         torch.tensor(
-            [state.draft_sequence for state in encoded_states], dtype=torch.long, device=device
+            [state.blue_picks for state in encoded_states], dtype=torch.long, device=device
         ),
+        torch.tensor(
+            [state.blue_bans for state in encoded_states], dtype=torch.long, device=device
+        ),
+        torch.tensor(
+            [state.red_picks for state in encoded_states], dtype=torch.long, device=device
+        ),
+        torch.tensor([state.red_bans for state in encoded_states], dtype=torch.long, device=device),
         torch.tensor(
             [state.continuous for state in encoded_states], dtype=torch.float32, device=device
         ),
@@ -395,12 +402,13 @@ def train_model(
     model = DraftNet(
         feature_space.num_champions,
         feature_space.continuous_size,
-        len(DRAFT_ORDER),
         embedding_dim=embedding_dim,
         hidden_size=hidden_size,
         dropout=dropout,
     ).to(target_device)
-    draft_sequence_tensor, continuous_tensor = _stack_encoded(torch, train_encoded, target_device)
+    blue_picks_tensor, blue_bans_tensor, red_picks_tensor, red_bans_tensor, continuous_tensor = (
+        _stack_encoded(torch, train_encoded, target_device)
+    )
     labels_tensor = torch.tensor(train_labels, dtype=torch.float32, device=target_device)
     weights_tensor = torch.tensor(train_weights, dtype=torch.float32, device=target_device)
     stopping_tensors = _stack_encoded(torch, stopping_encoded, target_device)
@@ -424,7 +432,10 @@ def train_model(
             batch_indices = permutation[start : start + batch_size]
             optimizer.zero_grad()
             probabilities = model(
-                draft_sequence_tensor[batch_indices],
+                blue_picks_tensor[batch_indices],
+                blue_bans_tensor[batch_indices],
+                red_picks_tensor[batch_indices],
+                red_bans_tensor[batch_indices],
                 continuous_tensor[batch_indices],
             )
             batch_weights = weights_tensor[batch_indices]
@@ -512,7 +523,6 @@ def train_model(
             "num_champions": feature_space.num_champions,
             "continuous_size": feature_space.continuous_size,
             "embedding_dim": embedding_dim,
-            "sequence_length": len(DRAFT_ORDER),
             "hidden_size": hidden_size,
             "dropout": dropout,
             "feature_space": feature_space.model_dump(mode="json"),

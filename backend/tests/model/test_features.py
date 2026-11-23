@@ -53,11 +53,11 @@ def test_feature_space_fits_only_training_games_and_encodes_blue_orientation(
     assert space.role_profiles["c1"]["top"].win_rate == 1
     assert space.role_profiles["c1"]["top"].damage_share == 0.2
     assert space.champion_traits["c1"].tags == ("Fighter",)
-    # Check the draft sequence at its known positions (actions=["c3","c4","c3","c4","c3","c4","c1"];
-    # DRAFT_ORDER[0..5] are bans B,R,B,R,B,R, DRAFT_ORDER[6] is the first blue pick)
-    assert encoded.draft_sequence[0] == c3_index
-    assert encoded.draft_sequence[1] == c4_index
-    assert encoded.draft_sequence[6] == c1_index
+    # Check slot arrays for the encoded state
+    assert c1_index in encoded.blue_picks
+    assert c1_index not in encoded.red_picks
+    assert c3_index in encoded.blue_bans
+    assert c4_index in encoded.red_bans
     restored = FeatureSpace.model_validate_json(space.model_dump_json())
     assert restored.model_dump() == space.model_dump()
 
@@ -141,7 +141,7 @@ def test_feature_space_keeps_vocabulary_fixed_while_history_changes(make_game: A
     assert second_space.role_profiles["c2"]["bot"].damage_share == 0.8
 
 
-def test_encode_returns_sentinel_padded_sequence_for_empty_state(
+def test_encode_returns_sentinel_padded_slot_arrays_for_empty_state(
     synthetic_drafts: list[GameDraft],
 ) -> None:
     feature_space = FeatureSpace.fit(synthetic_drafts)
@@ -149,27 +149,65 @@ def test_encode_returns_sentinel_padded_sequence_for_empty_state(
 
     encoded = feature_space.encode(DraftState())
 
-    assert encoded.draft_sequence == [sentinel] * len(DRAFT_ORDER)
+    assert encoded.blue_picks == [sentinel] * 5
+    assert encoded.blue_bans == [sentinel] * 5
+    assert encoded.red_picks == [sentinel] * 5
+    assert encoded.red_bans == [sentinel] * 5
 
 
-def test_encode_places_champion_indices_at_their_draft_order_position(
+def test_encode_places_champion_indices_in_the_matching_slot_group(
     synthetic_drafts: list[GameDraft],
 ) -> None:
     feature_space = FeatureSpace.fit(synthetic_drafts)
     full_game = synthetic_drafts[0]
-    action_ids = [action.champion_id for action in full_game.actions[: len(DRAFT_ORDER)]]
-    state = DraftState(patch=full_game.patch, actions=action_ids)
+
+    # Reorder game actions to match DRAFT_ORDER sequence
+    # Build slot assignments for each action based on DRAFT_ORDER
+    draft_actions: list[str] = [""] * len(DRAFT_ORDER)
+
+    # Count picks/bans per side to map to their DRAFT_ORDER positions
+    action_counters = {"blue_bans": 0, "red_bans": 0, "blue_picks": 0, "red_picks": 0}
+
+    for action in full_game.actions:
+        side = "blue" if action.team_id == full_game.blue_team_id else "red"
+        action_type = "bans" if action.action_type == "ban" else "picks"
+        counter_key = f"{side}_{action_type}"
+
+        # Find the next DRAFT_ORDER slot for this type/side combination
+        slot_index = 0
+        count_needed = action_counters[counter_key]
+        count_found = 0
+        for slot in DRAFT_ORDER:
+            slot_key = f"{slot.side}_{'bans' if slot.action == 'ban' else 'picks'}"
+            if slot_key == counter_key:
+                if count_found == count_needed:
+                    draft_actions[slot_index] = action.champion_id
+                    break
+                count_found += 1
+            slot_index += 1
+
+        action_counters[counter_key] += 1
+
+    state = DraftState(
+        patch=full_game.patch,
+        actions=draft_actions,
+    )
 
     encoded = feature_space.encode(state)
 
     champion_index = {
         champion_id: index for index, champion_id in enumerate(feature_space.champion_ids)
     }
-    expected = [
-        champion_index.get(champion_id, feature_space.num_champions) for champion_id in action_ids
-    ]
-    expected += [feature_space.num_champions] * (len(DRAFT_ORDER) - len(expected))
-    assert encoded.draft_sequence == expected
+    expected_blue_picks = sorted(
+        champion_index[action.champion_id]
+        for action in full_game.actions
+        if action.team_id == full_game.blue_team_id and action.action_type == "pick"
+    )
+    encoded_blue_picks = sorted(
+        value for value in encoded.blue_picks if value != feature_space.num_champions
+    )
+    assert encoded_blue_picks == expected_blue_picks
+    assert len(encoded.blue_picks) == 5
 
 
 def test_champion_index_is_cached_across_encode_calls(make_game: Any) -> None:

@@ -42,7 +42,6 @@ class WinPredictor:
             num_champions = int(checkpoint["num_champions"])
             continuous_size = int(checkpoint["continuous_size"])
             embedding_dim = int(checkpoint["embedding_dim"])
-            sequence_length = int(checkpoint["sequence_length"])
             hidden_size = int(checkpoint["hidden_size"])
             dropout = float(checkpoint["dropout"])
             state_dict = checkpoint["state_dict"]
@@ -56,7 +55,6 @@ class WinPredictor:
         model = DraftNet(
             num_champions,
             continuous_size,
-            sequence_length,
             embedding_dim=embedding_dim,
             hidden_size=hidden_size,
             dropout=dropout,
@@ -77,14 +75,23 @@ class WinPredictor:
             return []
         torch = _torch_module()
         encoded = [self.feature_space.encode(state) for state in states]
-        draft_sequence = torch.tensor(
-            [state.draft_sequence for state in encoded], dtype=torch.long, device=self._device
+        blue_picks = torch.tensor(
+            [state.blue_picks for state in encoded], dtype=torch.long, device=self._device
+        )
+        blue_bans = torch.tensor(
+            [state.blue_bans for state in encoded], dtype=torch.long, device=self._device
+        )
+        red_picks = torch.tensor(
+            [state.red_picks for state in encoded], dtype=torch.long, device=self._device
+        )
+        red_bans = torch.tensor(
+            [state.red_bans for state in encoded], dtype=torch.long, device=self._device
         )
         continuous = torch.tensor(
             [state.continuous for state in encoded], dtype=torch.float32, device=self._device
         )
         with torch.inference_mode():
-            predictions = self._model(draft_sequence, continuous)
+            predictions = self._model(blue_picks, blue_bans, red_picks, red_bans, continuous)
         # Move to CPU for Python float conversion if on GPU
         if self._device != "cpu":
             predictions = predictions.cpu()

@@ -145,15 +145,19 @@ def test_draft_net_returns_bounded_batch_probabilities() -> None:
     model = DraftNet(
         num_champions=10,
         continuous_size=4,
-        sequence_length=20,
         embedding_dim=4,
         hidden_size=8,
         dropout=0.1,
-        attention_heads=2,
     )
-    draft_sequence = torch.full((3, 20), 10, dtype=torch.long)  # sentinel == num_champions
+    empty_slot = torch.full((3, 5), 10, dtype=torch.long)  # sentinel == num_champions
 
-    probabilities = model(draft_sequence, torch.zeros((3, 4)))
+    probabilities = model(
+        empty_slot,
+        empty_slot,
+        empty_slot,
+        empty_slot,
+        torch.zeros((3, 4)),
+    )
 
     assert probabilities.shape == (3,)
     assert torch.all(probabilities >= 0)
@@ -382,7 +386,6 @@ def test_train_model_saves_embedding_checkpoint_fields(make_game: Any, tmp_path:
     assert checkpoint["num_champions"] > 0
     assert checkpoint["continuous_size"] > 0
     assert checkpoint["embedding_dim"] == 16
-    assert checkpoint["sequence_length"] == len(DRAFT_ORDER)
     assert "input_size" not in checkpoint
 
 
