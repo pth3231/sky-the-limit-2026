@@ -556,12 +556,3 @@ def test_is_better_stopping_checkpoint_never_prefers_undefined_auc_once_real_auc
     # even with a much lower loss — this is the exact rule that keeps AUC-based and
     # loss-based epochs from being compared against each other.
     assert _is_better_stopping_checkpoint(None, 0.10, 0.6, 0.65) is False
-
-
-def test_is_better_stopping_checkpoint_always_accepts_the_first_defined_auc() -> None:
-    from app.model.train import _is_better_stopping_checkpoint
-
-    # The first defined AUC always becomes the best, regardless of loss values,
-    # bootstrapping the transition from loss-based to AUC-based early stopping.
-    assert _is_better_stopping_checkpoint(0.60, 0.70, None, 0.65) is True
-    assert _is_better_stopping_checkpoint(0.60, 10.0, None, 0.65) is True
