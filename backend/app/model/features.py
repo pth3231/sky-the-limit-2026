@@ -327,11 +327,37 @@ class FeatureSpace(BaseModel):
         """Champion id -> embedding index, built once per instance instead of per encode() call."""
         return {champion_id: index for index, champion_id in enumerate(self.champion_ids)}
 
+    @cached_property
+    def _blended_stats_cache(self) -> dict[str | None, BlendedStats]:
+        """Per-patch blended stats, populated lazily across encode() calls (not per team pair)."""
+        return {}
+
     def _meta_for(self, patch: str, champion_id: str) -> ChampionMeta | None:
         return self.patch_champion_stats.get(patch, {}).get(
             champion_id,
             self.global_champion_stats.get(champion_id),
         )
+
+    def _scorer_probability(self, state: DraftState, picks: dict[str, list[str]]) -> float:
+        """Blue-side win probability from the explainable statistical scorer, as a model feature."""
+        if not self.aggregates:
+            return _TEAM_PRIOR_RATE
+        patch = state.patch if state.patch in self.aggregates else None
+        stats = self._blended_stats_cache.get(patch)
+        if stats is None:
+            stats = blend_patches(self.aggregates, patch=patch)
+            self._blended_stats_cache[patch] = stats
+        scorer = Scorer(
+            stats,
+            champion_names={},
+            our_team_id=state.blue_team_id or "",
+            our_team_name="",
+            opponent_team_id=state.red_team_id or "",
+            opponent_team_name="",
+            our_side="blue",
+            champion_roles=self.champion_roles,
+        )
+        return scorer.game_win_probability(picks["blue"], picks["red"])
 
     def encode(self, state: DraftState) -> EncodedState:
         """Encode a draft state as champion-index slot arrays plus continuous features."""
@@ -447,6 +473,8 @@ class FeatureSpace(BaseModel):
             continuous.append(
                 self.team_win_rates.get(team_id, _TEAM_PRIOR_RATE) if team_id else _TEAM_PRIOR_RATE
             )
+
+        continuous.append(self._scorer_probability(state, picks))
 
         return EncodedState(
             blue_picks=slots["blue_picks"],
