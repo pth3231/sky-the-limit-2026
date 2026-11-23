@@ -10,9 +10,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.engine.draft_order import DRAFT_ORDER
-from app.engine.scoring import Scorer
-from app.engine.stats import BlendedStats, blend_patches
-from app.pipeline.aggregates import PatchAggregate, compute_aggregates
 from app.pipeline.dataset import GameDraft
 from app.pipeline.ddragon import ChampionTraits, normalize_champion_name
 from app.pipeline.drafts import Role
@@ -138,7 +135,6 @@ class FeatureSpace(BaseModel):
     role_profiles: dict[str, dict[Role, RoleProfile]]
     matchup_win_rates: dict[str, float] = Field(default_factory=dict)
     team_win_rates: dict[str, float] = Field(default_factory=dict)
-    aggregates: dict[str, PatchAggregate] = Field(default_factory=dict)
 
     @classmethod
     def fit(
@@ -309,7 +305,6 @@ class FeatureSpace(BaseModel):
             role_profiles=role_profiles,
             matchup_win_rates=matchup_win_rates,
             team_win_rates=team_win_rates,
-            aggregates=compute_aggregates(train_games),
         )
 
     @property

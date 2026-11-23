@@ -297,18 +297,3 @@ def test_team_win_rate_reflects_recent_form_over_stale_history(make_game: Any) -
 
     # Dominated by 5 recent wins, not diluted by 24 old (pre-roster-change) losses.
     assert rate > 0.5
-
-
-def test_feature_space_fits_aggregates_from_training_games_only(make_game: Any) -> None:
-    from app.pipeline.aggregates import compute_aggregates
-
-    history_games = [make_game(blue_picks=["c0"], red_picks=["c1"]) for _ in range(3)]
-    future_games = [
-        make_game(patch="16.2", blue_picks=["c2"], red_picks=["c3"]) for _ in range(3)
-    ]
-
-    feature_space = FeatureSpace.fit(
-        history_games, vocabulary_games=[*history_games, *future_games]
-    )
-
-    assert feature_space.aggregates == compute_aggregates(history_games)
