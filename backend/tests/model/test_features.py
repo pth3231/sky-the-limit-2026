@@ -1,7 +1,9 @@
 from typing import Any
 
+import pytest
+
 from app.engine.draft_order import DRAFT_ORDER
-from app.model.features import DraftState, FeatureSpace
+from app.model.features import ELO_START, DraftState, FeatureSpace, team_elo_ratings
 from app.pipeline.dataset import GameDraft
 from app.pipeline.ddragon import ChampionTraits
 from app.pipeline.drafts import PlayerLine
@@ -269,7 +271,7 @@ def test_feature_space_encodes_team_win_rate_as_a_strength_prior(make_game: Any)
         DraftState(patch="16.1", blue_team_id="never-seen", red_team_id="filler")
     )
 
-    assert red_team_index == len(strong_encoded.continuous) - 1
+    assert red_team_index == len(strong_encoded.continuous) - 3  # Elo pair is appended last
     assert strong_encoded.continuous[blue_team_index] > 0.5
     assert weak_encoded.continuous[blue_team_index] < 0.5
     assert unknown_encoded.continuous[blue_team_index] == 0.5
@@ -297,3 +299,31 @@ def test_team_win_rate_reflects_recent_form_over_stale_history(make_game: Any) -
 
     # Dominated by 5 recent wins, not diluted by 24 old (pre-roster-change) losses.
     assert rate > 0.5
+
+
+def test_team_elo_is_point_in_time_and_updates_after_each_game(make_game: Any) -> None:
+    games = [
+        make_game(blue="a", red="b", winner="blue").model_copy(
+            update={"started_at": f"2026-01-0{day}T12:00:00Z"}
+        )
+        for day in (1, 2)
+    ]
+
+    pre_game, final = team_elo_ratings(games)
+
+    assert pre_game[games[0].game_id] == (ELO_START, ELO_START)  # own result not leaked
+    assert pre_game[games[1].game_id][0] > ELO_START > pre_game[games[1].game_id][1]
+    assert final["a"] > ELO_START > final["b"]
+    assert final["a"] + final["b"] == pytest.approx(2 * ELO_START)  # zero-sum
+
+
+def test_encode_uses_state_elo_over_fitted_rating(make_game: Any) -> None:
+    space = FeatureSpace.fit([make_game(blue="a", red="b", winner="blue")])
+
+    fitted = space.encode(DraftState(blue_team_id="a", red_team_id="b")).continuous[-2:]
+    explicit = space.encode(
+        DraftState(blue_team_id="a", red_team_id="b", blue_elo=ELO_START, red_elo=ELO_START)
+    ).continuous[-2:]
+
+    assert fitted[0] > 0 > fitted[1]
+    assert explicit == [0.0, 0.0]

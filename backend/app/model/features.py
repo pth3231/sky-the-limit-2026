@@ -20,6 +20,9 @@ _META_FIELDS: tuple[str, ...] = ("pick_rate", "ban_rate", "win_rate")
 _TEAM_PRIOR_RATE = 0.5
 _TEAM_PRIOR_GAMES = 10
 _TEAM_RECENT_GAMES_WINDOW = 50
+ELO_START = 1500.0
+_ELO_K = 48.0
+_ELO_SCALE = 400.0
 
 
 def _date_key(game: GameDraft) -> float:
@@ -32,6 +35,32 @@ def _date_key(game: GameDraft) -> float:
         return float("-inf")
 
 
+def team_elo_ratings(
+    games: Sequence[GameDraft],
+) -> tuple[dict[str, tuple[float, float]], dict[str, float]]:
+    """Replay decided games chronologically.
+
+    Returns each game's pre-game (blue, red) Elo keyed by ``game_id`` (no leakage: a game's own
+    result is applied only after its ratings are recorded) and the final rating per team.
+    """
+    ratings: dict[str, float] = {}
+    pre_game: dict[str, tuple[float, float]] = {}
+    decided = [
+        game
+        for game in games
+        if game.finished and game.winner_team_id in {game.blue_team_id, game.red_team_id}
+    ]
+    for game in sorted(decided, key=lambda g: (_date_key(g), g.series_id, g.game_number)):
+        blue = ratings.get(game.blue_team_id, ELO_START)
+        red = ratings.get(game.red_team_id, ELO_START)
+        pre_game[game.game_id] = (blue, red)
+        expected = 1.0 / (1.0 + 10.0 ** ((red - blue) / _ELO_SCALE))
+        delta = _ELO_K * ((1.0 if game.winner_team_id == game.blue_team_id else 0.0) - expected)
+        ratings[game.blue_team_id] = blue + delta
+        ratings[game.red_team_id] = red - delta
+    return pre_game, ratings
+
+
 class DraftState(BaseModel):
     """Blue-oriented partial or complete draft state used by the model."""
 
@@ -41,6 +70,9 @@ class DraftState(BaseModel):
     actions: list[str] = Field(default_factory=list)
     blue_team_id: str | None = None
     red_team_id: str | None = None
+    # Pre-game Elo; when None, encode falls back to the fitted final rating for the team id.
+    blue_elo: float | None = None
+    red_elo: float | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +167,7 @@ class FeatureSpace(BaseModel):
     role_profiles: dict[str, dict[Role, RoleProfile]]
     matchup_win_rates: dict[str, float] = Field(default_factory=dict)
     team_win_rates: dict[str, float] = Field(default_factory=dict)
+    team_elo: dict[str, float] = Field(default_factory=dict)
 
     @classmethod
     def fit(
@@ -305,6 +338,7 @@ class FeatureSpace(BaseModel):
             role_profiles=role_profiles,
             matchup_win_rates=matchup_win_rates,
             team_win_rates=team_win_rates,
+            team_elo=team_elo_ratings(train_games)[1],
         )
 
     @property
@@ -442,6 +476,14 @@ class FeatureSpace(BaseModel):
             continuous.append(
                 self.team_win_rates.get(team_id, _TEAM_PRIOR_RATE) if team_id else _TEAM_PRIOR_RATE
             )
+
+        for elo, team_id in (
+            (state.blue_elo, state.blue_team_id),
+            (state.red_elo, state.red_team_id),
+        ):
+            if elo is None:
+                elo = self.team_elo.get(team_id, ELO_START) if team_id else ELO_START
+            continuous.append((elo - ELO_START) / _ELO_SCALE)
 
         return EncodedState(
             blue_picks=slots["blue_picks"],
