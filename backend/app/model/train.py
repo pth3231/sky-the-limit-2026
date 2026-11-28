@@ -18,7 +18,14 @@ from app.config import DerivedSettings
 from app.engine.draft_order import DRAFT_ORDER
 from app.engine.scoring import Scorer
 from app.engine.stats import blend_patches
-from app.model.features import DraftState, EncodedState, FeatureSpace
+from app.model.features import (
+    DraftState,
+    EncodedState,
+    FeatureSpace,
+    RosterHistory,
+    player_history,
+    team_elo_ratings,
+)
 from app.pipeline.aggregates import compute_aggregates
 from app.pipeline.dataset import GameDraft
 
@@ -137,13 +144,31 @@ def _resolve_split(strategy: str, seed: int) -> _SplitFn:
     raise ValueError(f"Unsupported split strategy: {strategy!r} (use 'chronological' or 'random')")
 
 
-def _prefix_examples(games: list[GameDraft]) -> list[_PrefixExample]:
+def _prefix_examples(
+    games: list[GameDraft],
+    pre_game_elo: dict[str, tuple[float, float]] | None = None,
+    roster: dict[str, RosterHistory] | None = None,
+) -> list[_PrefixExample]:
     examples: list[_PrefixExample] = []
+    pre_game_elo = pre_game_elo or {}
+    roster = roster or {}
     for game in games:
         if not _is_decided(game):
             continue
         label = 1.0 if game.winner_team_id == game.blue_team_id else 0.0
         action_ids = [action.champion_id for action in game.actions[: len(DRAFT_ORDER)]]
+        blue_elo, red_elo = pre_game_elo.get(game.game_id, (None, None))
+        history = roster.get(game.game_id)
+        roster_fields: dict[str, Any] = (
+            {
+                "blue_player_elo": history.blue_elo,
+                "red_player_elo": history.red_elo,
+                "blue_comfort": history.blue_comfort,
+                "red_comfort": history.red_comfort,
+            }
+            if history
+            else {}
+        )
         for prefix_length in range(len(action_ids) + 1):
             examples.append(
                 _PrefixExample(
@@ -153,6 +178,9 @@ def _prefix_examples(games: list[GameDraft]) -> list[_PrefixExample]:
                         actions=action_ids[:prefix_length],
                         blue_team_id=game.blue_team_id,
                         red_team_id=game.red_team_id,
+                        blue_elo=blue_elo,
+                        red_elo=red_elo,
+                        **roster_fields,
                     ),
                     label=label,
                     weight=prefix_length / len(DRAFT_ORDER),
@@ -284,6 +312,54 @@ def _scorer_probabilities(
     return probabilities
 
 
+def _elo_probability(state: DraftState) -> float:
+    blue, red = state.blue_elo or 1500.0, state.red_elo or 1500.0
+    return 1.0 / (1.0 + 10.0 ** ((red - blue) / 400.0))
+
+
+def _full_draft_lift(
+    examples: list[_PrefixExample],
+    model_probabilities: list[float],
+    seed: int,
+    resamples: int = 200,
+) -> dict[str, float | None]:
+    """Full-draft AUC of the model vs the Elo-only baseline, with a paired bootstrap CI on lift."""
+    rows = [
+        (example.label, probability, _elo_probability(example.state))
+        for example, probability in zip(examples, model_probabilities, strict=True)
+        if len(example.state.actions) == len(DRAFT_ORDER)
+    ]
+
+    def auc_pair(sample: list[tuple[float, float, float]]) -> tuple[float, float] | None:
+        labels = [row[0] for row in sample]
+        model_auc = _metrics(labels, [row[1] for row in sample])["auc"]
+        elo_auc = _metrics(labels, [row[2] for row in sample])["auc"]
+        return None if model_auc is None or elo_auc is None else (model_auc, elo_auc)
+
+    base = auc_pair(rows)
+    if base is None:
+        return {
+            "model_auc": None,
+            "elo_auc": None,
+            "lift": None,
+            "lift_ci_low": None,
+            "lift_ci_high": None,
+        }
+    rng = random.Random(seed)
+    lifts = sorted(
+        pair[0] - pair[1]
+        for _ in range(resamples)
+        if (pair := auc_pair(rng.choices(rows, k=len(rows)))) is not None
+    )
+    return {
+        "model_auc": base[0],
+        "elo_auc": base[1],
+        "lift": base[0] - base[1],
+        "lift_ci_low": lifts[int(0.025 * len(lifts))] if lifts else None,
+        "lift_ci_high": lifts[int(0.975 * len(lifts)) - 1] if lifts else None,
+    }
+
+
 def _resolve_device(torch: Any, device: str) -> Any:
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -358,18 +434,21 @@ def train_model(
             f"{len(validation_games)} validation games. Building prefix examples...",
             flush=True,
         )
-    train_examples = _prefix_examples(fit_games)
+    pre_game_elo, final_elo = team_elo_ratings(decided_games)
+    roster = player_history(decided_games)
+    train_examples = _prefix_examples(fit_games, pre_game_elo, roster)
     if not train_examples:
         raise ValueError("Training games do not contain draft actions")
-    stopping_examples = _prefix_examples(stopping_games)
-    validation_examples = _prefix_examples(validation_games)
+    stopping_examples = _prefix_examples(stopping_games, pre_game_elo, roster)
+    validation_examples = _prefix_examples(validation_games, pre_game_elo, roster)
     if verbose:
         print(
             f"Built {len(train_examples)} training examples. Fitting feature space on "
             f"{len(fit_games)} games...",
             flush=True,
         )
-    feature_space = FeatureSpace.fit(fit_games, ddragon)
+    # Final ratings include every decided game so inference starts from current team strength.
+    feature_space = FeatureSpace.fit(fit_games, ddragon).model_copy(update={"team_elo": final_elo})
     if verbose:
         print(
             "Encoding training examples with 5-fold out-of-fold features "
@@ -513,6 +592,10 @@ def train_model(
             "model": _metrics(validation_labels, model_probabilities),
             "blue_rate_baseline": _metrics(validation_labels, baseline_probabilities),
             "statistical_scorer": _metrics(validation_labels, scorer_probabilities),
+            "elo_baseline": _metrics(
+                validation_labels, [_elo_probability(e.state) for e in validation_examples]
+            ),
+            "full_draft_vs_elo": _full_draft_lift(validation_examples, model_probabilities, seed),
         },
     )
 

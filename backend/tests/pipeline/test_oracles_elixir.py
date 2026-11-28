@@ -70,6 +70,7 @@ def _player_row(gid, side, pos, champ, **stats):
         "teamname": f"{side} Team",
         "teamid": f"oe-{side.lower()}",
         "champion": champ,
+        "playerid": f"p-{side}-{pos}",
         "kills": "0",
         "assists": "0",
         "teamkills": "10",
@@ -131,6 +132,7 @@ def test_build_game_emits_full_draft_order_aligned_sequence() -> None:
         expected_team = game.blue_team_id if slot.side == "blue" else game.red_team_id
         assert action.team_id == expected_team
     assert len(game.lineups) == 10
+    assert {line.player_id for line in game.lineups} >= {"p-Blue-top", "p-Red-sup"}
     assert {line.role for line in game.lineups} == {"top", "jungle", "mid", "bot", "support"}
 
 
