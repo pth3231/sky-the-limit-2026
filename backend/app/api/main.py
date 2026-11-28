@@ -37,7 +37,10 @@ def create_app(engine: DraftEngine | None = None) -> FastAPI:
         if getattr(app.state, "engine", None) is None:
             settings = Settings()
             app.state.engine = load_engine(
-                settings.derived_dir, settings.data_dir, settings.cloud9_team_id
+                settings.derived_dir,
+                settings.data_dir,
+                settings.cloud9_team_id,
+                use_model=settings.use_model,
             )
         yield
 
