@@ -3,7 +3,13 @@ from typing import Any
 import pytest
 
 from app.engine.draft_order import DRAFT_ORDER
-from app.model.features import ELO_START, DraftState, FeatureSpace, team_elo_ratings
+from app.model.features import (
+    ELO_START,
+    DraftState,
+    FeatureSpace,
+    player_history,
+    team_elo_ratings,
+)
 from app.pipeline.dataset import GameDraft
 from app.pipeline.ddragon import ChampionTraits
 from app.pipeline.drafts import PlayerLine
@@ -271,7 +277,9 @@ def test_feature_space_encodes_team_win_rate_as_a_strength_prior(make_game: Any)
         DraftState(patch="16.1", blue_team_id="never-seen", red_team_id="filler")
     )
 
-    assert red_team_index == len(strong_encoded.continuous) - 3  # Elo pair is appended last
+    assert (
+        red_team_index == len(strong_encoded.continuous) - 9
+    )  # team Elo pair + 6 roster floats follow
     assert strong_encoded.continuous[blue_team_index] > 0.5
     assert weak_encoded.continuous[blue_team_index] < 0.5
     assert unknown_encoded.continuous[blue_team_index] == 0.5
@@ -320,10 +328,59 @@ def test_team_elo_is_point_in_time_and_updates_after_each_game(make_game: Any) -
 def test_encode_uses_state_elo_over_fitted_rating(make_game: Any) -> None:
     space = FeatureSpace.fit([make_game(blue="a", red="b", winner="blue")])
 
-    fitted = space.encode(DraftState(blue_team_id="a", red_team_id="b")).continuous[-2:]
+    fitted = space.encode(DraftState(blue_team_id="a", red_team_id="b")).continuous[-8:-6]
     explicit = space.encode(
         DraftState(blue_team_id="a", red_team_id="b", blue_elo=ELO_START, red_elo=ELO_START)
-    ).continuous[-2:]
+    ).continuous[-8:-6]
 
     assert fitted[0] > 0 > fitted[1]
     assert explicit == [0.0, 0.0]
+
+
+def _lineup(team: str, champion: str, player: str) -> PlayerLine:
+    return PlayerLine(team_id=team, role=None, champion_id=champion, player_id=player)
+
+
+def _rostered(game: GameDraft, blue_champion: str = "c1") -> GameDraft:
+    return game.model_copy(
+        update={
+            "lineups": [
+                *(_lineup(game.blue_team_id, blue_champion, f"b{i}") for i in range(5)),
+                *(_lineup(game.red_team_id, "c2", f"r{i}") for i in range(5)),
+            ]
+        }
+    )
+
+
+def test_player_history_is_point_in_time(make_game: Any) -> None:
+    games = [
+        _rostered(make_game(blue="a", red="b", winner="blue")).model_copy(
+            update={"started_at": f"2026-01-0{day}T12:00:00Z"}
+        )
+        for day in (1, 2)
+    ]
+
+    history = player_history(games)
+
+    first, second = history[games[0].game_id], history[games[1].game_id]
+    assert first.blue_elo == first.red_elo == ELO_START
+    assert first.blue_comfort == {"c1": (0, 0)}  # own result not leaked
+    assert second.blue_elo > ELO_START > second.red_elo
+    assert second.blue_comfort == {"c1": (1, 1)}
+
+
+def test_player_history_skips_games_without_player_ids(make_game: Any) -> None:
+    assert player_history([make_game(blue="a", red="b")]) == {}
+
+
+def test_comfort_only_counts_revealed_picks() -> None:
+    space = FeatureSpace.fit([])
+    comfort = {"c1": (9, 9)}
+
+    def blue_comfort(actions: list[str]) -> list[float]:
+        state = DraftState(actions=actions, blue_comfort=comfort)
+        return space.encode(state).continuous[-6:-3]
+
+    assert blue_comfort([])[1:] == [0.0, 0.0]  # pick not yet revealed
+    revealed = blue_comfort(["x"] * 6 + ["c1"])  # DRAFT_ORDER[6] is a blue pick
+    assert revealed[1] > 0 and revealed[2] > 0

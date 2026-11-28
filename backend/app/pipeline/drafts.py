@@ -40,6 +40,7 @@ class PlayerLine(BaseModel):
     team_id: str
     role: Role | None
     champion_id: str
+    player_id: str | None = None
     damage_share: float = 0.0
     damage_taken: float = 0.0
     vision_score: float = 0.0

@@ -18,7 +18,14 @@ from app.config import DerivedSettings
 from app.engine.draft_order import DRAFT_ORDER
 from app.engine.scoring import Scorer
 from app.engine.stats import blend_patches
-from app.model.features import DraftState, EncodedState, FeatureSpace, team_elo_ratings
+from app.model.features import (
+    DraftState,
+    EncodedState,
+    FeatureSpace,
+    RosterHistory,
+    player_history,
+    team_elo_ratings,
+)
 from app.pipeline.aggregates import compute_aggregates
 from app.pipeline.dataset import GameDraft
 
@@ -138,16 +145,30 @@ def _resolve_split(strategy: str, seed: int) -> _SplitFn:
 
 
 def _prefix_examples(
-    games: list[GameDraft], pre_game_elo: dict[str, tuple[float, float]] | None = None
+    games: list[GameDraft],
+    pre_game_elo: dict[str, tuple[float, float]] | None = None,
+    roster: dict[str, RosterHistory] | None = None,
 ) -> list[_PrefixExample]:
     examples: list[_PrefixExample] = []
     pre_game_elo = pre_game_elo or {}
+    roster = roster or {}
     for game in games:
         if not _is_decided(game):
             continue
         label = 1.0 if game.winner_team_id == game.blue_team_id else 0.0
         action_ids = [action.champion_id for action in game.actions[: len(DRAFT_ORDER)]]
         blue_elo, red_elo = pre_game_elo.get(game.game_id, (None, None))
+        history = roster.get(game.game_id)
+        roster_fields: dict[str, Any] = (
+            {
+                "blue_player_elo": history.blue_elo,
+                "red_player_elo": history.red_elo,
+                "blue_comfort": history.blue_comfort,
+                "red_comfort": history.red_comfort,
+            }
+            if history
+            else {}
+        )
         for prefix_length in range(len(action_ids) + 1):
             examples.append(
                 _PrefixExample(
@@ -159,6 +180,7 @@ def _prefix_examples(
                         red_team_id=game.red_team_id,
                         blue_elo=blue_elo,
                         red_elo=red_elo,
+                        **roster_fields,
                     ),
                     label=label,
                     weight=prefix_length / len(DRAFT_ORDER),
@@ -413,11 +435,12 @@ def train_model(
             flush=True,
         )
     pre_game_elo, final_elo = team_elo_ratings(decided_games)
-    train_examples = _prefix_examples(fit_games, pre_game_elo)
+    roster = player_history(decided_games)
+    train_examples = _prefix_examples(fit_games, pre_game_elo, roster)
     if not train_examples:
         raise ValueError("Training games do not contain draft actions")
-    stopping_examples = _prefix_examples(stopping_games, pre_game_elo)
-    validation_examples = _prefix_examples(validation_games, pre_game_elo)
+    stopping_examples = _prefix_examples(stopping_games, pre_game_elo, roster)
+    validation_examples = _prefix_examples(validation_games, pre_game_elo, roster)
     if verbose:
         print(
             f"Built {len(train_examples)} training examples. Fitting feature space on "

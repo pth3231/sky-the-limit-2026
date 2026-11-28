@@ -1,5 +1,6 @@
 """Serializable blue-oriented features for historical drafts and live states."""
 
+import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -23,6 +24,8 @@ _TEAM_RECENT_GAMES_WINDOW = 50
 ELO_START = 1500.0
 _ELO_K = 48.0
 _ELO_SCALE = 400.0
+_PLAYER_ELO_K = 24.0
+_COMFORT_PRIOR_GAMES = 5.0
 
 
 def _date_key(game: GameDraft) -> float:
@@ -61,6 +64,65 @@ def team_elo_ratings(
     return pre_game, ratings
 
 
+@dataclass(frozen=True)
+class RosterHistory:
+    """Pre-game player strength and player-on-champion record for one game's two rosters."""
+
+    blue_elo: float
+    red_elo: float
+    blue_comfort: dict[str, tuple[int, int]]  # champion_id -> (games, wins) before this game
+    red_comfort: dict[str, tuple[int, int]]
+
+
+def player_history(games: Sequence[GameDraft]) -> dict[str, RosterHistory]:
+    """Replay decided games with player ids chronologically; keyed by ``game_id`` (no leakage).
+
+    Games whose lineups lack five identified players per side are skipped and update nothing.
+    """
+    elo: dict[str, float] = {}
+    record: dict[tuple[str, str], tuple[int, int]] = {}
+    history: dict[str, RosterHistory] = {}
+    decided = [
+        game
+        for game in games
+        if game.finished and game.winner_team_id in {game.blue_team_id, game.red_team_id}
+    ]
+    for game in sorted(decided, key=lambda g: (_date_key(g), g.series_id, g.game_number)):
+        sides = {
+            side: [line for line in game.lineups if line.team_id == team_id and line.player_id]
+            for side, team_id in (("blue", game.blue_team_id), ("red", game.red_team_id))
+        }
+        if len(sides["blue"]) != 5 or len(sides["red"]) != 5:
+            continue
+        mean = {
+            side: sum(elo.get(line.player_id or "", ELO_START) for line in lines) / 5
+            for side, lines in sides.items()
+        }
+        history[game.game_id] = RosterHistory(
+            blue_elo=mean["blue"],
+            red_elo=mean["red"],
+            blue_comfort={
+                line.champion_id: record.get((line.player_id or "", line.champion_id), (0, 0))
+                for line in sides["blue"]
+            },
+            red_comfort={
+                line.champion_id: record.get((line.player_id or "", line.champion_id), (0, 0))
+                for line in sides["red"]
+            },
+        )
+        blue_won = game.winner_team_id == game.blue_team_id
+        expected = 1.0 / (1.0 + 10.0 ** ((mean["red"] - mean["blue"]) / _ELO_SCALE))
+        delta = _PLAYER_ELO_K * ((1.0 if blue_won else 0.0) - expected)
+        for side, lines in sides.items():
+            won = blue_won if side == "blue" else not blue_won
+            for line in lines:
+                key = (line.player_id or "", line.champion_id)
+                elo[key[0]] = elo.get(key[0], ELO_START) + (delta if side == "blue" else -delta)
+                games_played, wins = record.get(key, (0, 0))
+                record[key] = (games_played + 1, wins + int(won))
+    return history
+
+
 class DraftState(BaseModel):
     """Blue-oriented partial or complete draft state used by the model."""
 
@@ -73,6 +135,11 @@ class DraftState(BaseModel):
     # Pre-game Elo; when None, encode falls back to the fitted final rating for the team id.
     blue_elo: float | None = None
     red_elo: float | None = None
+    # Mean pre-game player Elo per roster, and each pick's (games, wins) for its player.
+    blue_player_elo: float | None = None
+    red_player_elo: float | None = None
+    blue_comfort: dict[str, tuple[int, int]] = Field(default_factory=dict)
+    red_comfort: dict[str, tuple[int, int]] = Field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -484,6 +551,21 @@ class FeatureSpace(BaseModel):
             if elo is None:
                 elo = self.team_elo.get(team_id, ELO_START) if team_id else ELO_START
             continuous.append((elo - ELO_START) / _ELO_SCALE)
+
+        for side, player_elo, comfort in (
+            ("blue", state.blue_player_elo, state.blue_comfort),
+            ("red", state.red_player_elo, state.red_comfort),
+        ):
+            continuous.append(((player_elo or ELO_START) - ELO_START) / _ELO_SCALE)
+            # Only picks already revealed count, so prefix states never see future picks.
+            stats = [comfort[champion_id] for champion_id in picks[side] if champion_id in comfort]
+            prior = _COMFORT_PRIOR_GAMES
+            continuous.append(
+                sum((w + 0.5 * prior) / (g + prior) - 0.5 for g, w in stats) / len(stats)
+                if stats
+                else 0.0
+            )
+            continuous.append(sum(math.log1p(g) for g, _ in stats) / len(stats) if stats else 0.0)
 
         return EncodedState(
             blue_picks=slots["blue_picks"],

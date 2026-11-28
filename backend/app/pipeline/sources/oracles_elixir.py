@@ -133,6 +133,7 @@ def build_game(rows: list[Mapping[str, str]], name_to_id: Mapping[str, str]) -> 
                     team_id=team_ids[side],
                     role=role,
                     champion_id=resolve_champion_id(row["champion"].strip(), name_to_id),
+                    player_id=row.get("playerid", "").strip() or None,
                     damage_share=_number(row.get("damageshare")),
                     damage_taken=_number(row.get("totaldamagetaken")),
                     vision_score=_number(row.get("visionscore")),
