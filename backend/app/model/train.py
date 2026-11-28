@@ -6,6 +6,7 @@ import json
 import math
 import random
 from collections import defaultdict, deque
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +18,7 @@ from app.config import DerivedSettings
 from app.engine.draft_order import DRAFT_ORDER
 from app.engine.scoring import Scorer
 from app.engine.stats import blend_patches
-from app.model.features import DraftState, FeatureSpace
+from app.model.features import DraftState, EncodedState, FeatureSpace
 from app.pipeline.aggregates import compute_aggregates
 from app.pipeline.dataset import GameDraft
 
@@ -29,6 +30,7 @@ class _PrefixExample:
     game: GameDraft
     state: DraftState
     label: float
+    weight: float
 
 
 class TrainingReport(BaseModel):
@@ -95,6 +97,46 @@ def time_split(
     )
 
 
+def random_split(
+    games: list[GameDraft], train_fraction: float = 0.85, *, seed: int = 42
+) -> tuple[list[GameDraft], list[GameDraft]]:
+    """Split by series with random assignment, keeping each series intact.
+
+    Unlike ``time_split`` this ignores chronology, so train and validation are
+    drawn from the same patch/meta distribution. It exists to probe the data
+    ceiling (how much of the low validation AUC is distribution shift versus
+    genuinely weak signal), not for production training.
+    """
+    if not 0.0 < train_fraction < 1.0:
+        raise ValueError("train_fraction must be between 0 and 1")
+    ordered_series = _ordered_series(games)
+    if len(ordered_series) < 2:
+        return sorted(games, key=lambda game: (_date_key(game), game.game_number, game.game_id)), []
+    shuffled = list(ordered_series)
+    random.Random(seed).shuffle(shuffled)
+    split_at = min(max(int(len(shuffled) * train_fraction), 1), len(shuffled) - 1)
+    training_series = set(shuffled[:split_at])
+    ordered_games = sorted(
+        games,
+        key=lambda game: (_date_key(game), game.series_id, game.game_number, game.game_id),
+    )
+    return (
+        [game for game in ordered_games if game.series_id in training_series],
+        [game for game in ordered_games if game.series_id not in training_series],
+    )
+
+
+_SplitFn = Callable[[list[GameDraft], float], tuple[list[GameDraft], list[GameDraft]]]
+
+
+def _resolve_split(strategy: str, seed: int) -> _SplitFn:
+    if strategy == "chronological":
+        return time_split
+    if strategy == "random":
+        return lambda games, train_fraction: random_split(games, train_fraction, seed=seed)
+    raise ValueError(f"Unsupported split strategy: {strategy!r} (use 'chronological' or 'random')")
+
+
 def _prefix_examples(games: list[GameDraft]) -> list[_PrefixExample]:
     examples: list[_PrefixExample] = []
     for game in games:
@@ -109,8 +151,11 @@ def _prefix_examples(games: list[GameDraft]) -> list[_PrefixExample]:
                     state=DraftState(
                         patch=game.patch or "unknown",
                         actions=action_ids[:prefix_length],
+                        blue_team_id=game.blue_team_id,
+                        red_team_id=game.red_team_id,
                     ),
                     label=label,
+                    weight=prefix_length / len(DRAFT_ORDER),
                 )
             )
     return examples
@@ -120,7 +165,7 @@ def _out_of_fold_features(
     examples: list[_PrefixExample],
     games: list[GameDraft],
     ddragon: dict[str, Any] | None = None,
-) -> list[list[float]]:
+) -> list[EncodedState]:
     """Encode each example with historical stats fitted outside its series fold."""
     series_games: dict[str, list[GameDraft]] = defaultdict(list)
     for game in games:
@@ -142,7 +187,7 @@ def _out_of_fold_features(
             )
         examples_by_fold[fold].append((index, example))
 
-    features: list[list[float] | None] = [None] * len(examples)
+    encoded: list[EncodedState | None] = [None] * len(examples)
     for fold, fold_examples in examples_by_fold.items():
         history_games = [game for game in games if series_folds[game.series_id] != fold]
         feature_space = FeatureSpace.fit(
@@ -151,11 +196,11 @@ def _out_of_fold_features(
             vocabulary_games=games,
         )
         for index, example in fold_examples:
-            features[index] = feature_space.encode(example.state)
+            encoded[index] = feature_space.encode(example.state)
 
-    if any(feature is None for feature in features):
+    if any(value is None for value in encoded):
         raise RuntimeError("Not all training examples received out-of-fold features")
-    return [feature for feature in features if feature is not None]
+    return [value for value in encoded if value is not None]
 
 
 def _torch_module() -> Any:
@@ -204,6 +249,8 @@ def _scorer_probabilities(
     champion_names = {
         action.champion_id: action.champion_name for game in train_games for action in game.actions
     }
+    blended_by_patch: dict[str | None, Any] = {}
+    champion_roles = FeatureSpace.fit(train_games).champion_roles
     scorers: dict[tuple[str, str, str], Scorer] = {}
     probabilities: list[float] = []
     for example in examples:
@@ -212,7 +259,10 @@ def _scorer_probabilities(
         scorer = scorers.get(key)
         if scorer is None:
             patch = game.patch if game.patch in aggregates else None
-            stats = blend_patches(aggregates, patch=patch)
+            stats = blended_by_patch.get(patch)
+            if stats is None:
+                stats = blend_patches(aggregates, patch=patch)
+                blended_by_patch[patch] = stats
             scorer = Scorer(
                 stats,
                 champion_names=champion_names,
@@ -221,6 +271,7 @@ def _scorer_probabilities(
                 opponent_team_id=game.red_team_id,
                 opponent_team_name=game.red_team_id,
                 our_side="blue",
+                champion_roles=champion_roles,
             )
             scorers[key] = scorer
         blue_picks: list[str] = []
@@ -243,47 +294,97 @@ def _resolve_device(torch: Any, device: str) -> Any:
     return torch.device(device)
 
 
+def _stack_encoded(
+    torch: Any, encoded_states: Sequence[EncodedState], device: Any
+) -> tuple[Any, Any, Any, Any, Any]:
+    """Stack a batch of EncodedState into the five tensors DraftNet.forward expects."""
+    return (
+        torch.tensor(
+            [state.blue_picks for state in encoded_states], dtype=torch.long, device=device
+        ),
+        torch.tensor(
+            [state.blue_bans for state in encoded_states], dtype=torch.long, device=device
+        ),
+        torch.tensor(
+            [state.red_picks for state in encoded_states], dtype=torch.long, device=device
+        ),
+        torch.tensor([state.red_bans for state in encoded_states], dtype=torch.long, device=device),
+        torch.tensor(
+            [state.continuous for state in encoded_states], dtype=torch.float32, device=device
+        ),
+    )
+
+
 def train_model(
     games: list[GameDraft],
     output_dir: Path,
     *,
     epochs: int = 100,
-    hidden_size: int = 128,
-    dropout: float = 0.2,
+    hidden_size: int = 32,
+    dropout: float = 0.5,
+    embedding_dim: int = 16,
     learning_rate: float = 0.001,
-    weight_decay: float = 1e-3,
+    weight_decay: float = 1e-2,
     batch_size: int = 256,
     patience: int = 20,
     seed: int = 42,
     device: str = "auto",
+    split: str = "chronological",
     ddragon: dict[str, Any] | None = None,
     verbose: bool = False,
 ) -> TrainingReport:
-    """Train on decided games, validate on the newest time window, and save local artifacts.
+    """Train on decided games, validate on a held-out split, and save local artifacts.
 
+    ``split`` selects how games are partitioned: ``"chronological"`` (default, production)
+    reserves the newest series for validation; ``"random"`` assigns series at random, which
+    removes patch/meta drift and is used only to probe the achievable data ceiling.
     All splits keep series together. Training examples use series-grouped out-of-fold history;
     stopping and validation features use a feature space fitted on the earlier fitting window.
     """
     torch = _torch_module()
     from app.model.net import DraftNet
 
+    if verbose:
+        print(f"Splitting {len(games)} games ({split} split)...", flush=True)
+    split_fn = _resolve_split(split, seed)
     decided_games = [game for game in games if _is_decided(game)]
-    train_games, validation_games = time_split(decided_games)
+    train_games, validation_games = split_fn(decided_games, 0.85)
     if not train_games:
         raise ValueError("At least one decided game with draft actions is required")
-    fit_games, stopping_games = time_split(train_games)
+    fit_games, stopping_games = split_fn(train_games, 0.85)
+    if verbose:
+        print(
+            f"Split into {len(fit_games)} fit / {len(stopping_games)} stopping / "
+            f"{len(validation_games)} validation games. Building prefix examples...",
+            flush=True,
+        )
     train_examples = _prefix_examples(fit_games)
     if not train_examples:
         raise ValueError("Training games do not contain draft actions")
     stopping_examples = _prefix_examples(stopping_games)
     validation_examples = _prefix_examples(validation_games)
+    if verbose:
+        print(
+            f"Built {len(train_examples)} training examples. Fitting feature space on "
+            f"{len(fit_games)} games...",
+            flush=True,
+        )
     feature_space = FeatureSpace.fit(fit_games, ddragon)
-    input_size = feature_space.input_size
-    train_features = _out_of_fold_features(train_examples, fit_games, ddragon)
+    if verbose:
+        print(
+            "Encoding training examples with 5-fold out-of-fold features "
+            "(this is the slow step on large datasets)...",
+            flush=True,
+        )
+    train_encoded = _out_of_fold_features(train_examples, fit_games, ddragon)
     train_labels = [example.label for example in train_examples]
-    stopping_features = [feature_space.encode(example.state) for example in stopping_examples]
+    train_weights = [example.weight for example in train_examples]
+    if verbose:
+        print("Encoding stopping and validation features...", flush=True)
+    stopping_encoded = [feature_space.encode(example.state) for example in stopping_examples]
     stopping_labels = [example.label for example in stopping_examples]
-    validation_features = [feature_space.encode(example.state) for example in validation_examples]
+    stopping_weights = [example.weight for example in stopping_examples]
+    validation_encoded = [feature_space.encode(example.state) for example in validation_examples]
     validation_labels = [example.label for example in validation_examples]
 
     random.seed(seed)
@@ -298,18 +399,30 @@ def train_model(
             f"{len(validation_games)} validation games, up to {epochs} epochs, "
             f"patience={patience}"
         )
-    model = DraftNet(input_size, hidden_size=hidden_size, dropout=dropout).to(target_device)
-    features_tensor = torch.tensor(train_features, dtype=torch.float32, device=target_device)
+    model = DraftNet(
+        feature_space.num_champions,
+        feature_space.continuous_size,
+        embedding_dim=embedding_dim,
+        hidden_size=hidden_size,
+        dropout=dropout,
+    ).to(target_device)
+    blue_picks_tensor, blue_bans_tensor, red_picks_tensor, red_bans_tensor, continuous_tensor = (
+        _stack_encoded(torch, train_encoded, target_device)
+    )
     labels_tensor = torch.tensor(train_labels, dtype=torch.float32, device=target_device)
-    stopping_tensor = torch.tensor(stopping_features, dtype=torch.float32, device=target_device)
+    weights_tensor = torch.tensor(train_weights, dtype=torch.float32, device=target_device)
+    stopping_tensors = _stack_encoded(torch, stopping_encoded, target_device)
     stopping_labels_tensor = torch.tensor(
         stopping_labels, dtype=torch.float32, device=target_device
+    )
+    stopping_weights_tensor = torch.tensor(
+        stopping_weights, dtype=torch.float32, device=target_device
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     best_loss = float("inf")
     best_epoch = epochs
     best_state: dict[str, Any] | None = None
-    train_size = features_tensor.shape[0]
+    train_size = labels_tensor.shape[0]
     recent_stopping_losses: deque[float] = deque(maxlen=_STOPPING_SMOOTHING_WINDOW)
     for epoch in range(1, epochs + 1):
         model.train()
@@ -317,25 +430,36 @@ def train_model(
         epoch_loss_total = 0.0
         for start in range(0, train_size, batch_size):
             batch_indices = permutation[start : start + batch_size]
-            batch_features = features_tensor[batch_indices]
-            batch_labels = labels_tensor[batch_indices]
             optimizer.zero_grad()
-            probabilities = model(batch_features)
-            loss = torch.nn.functional.binary_cross_entropy(probabilities, batch_labels)
+            probabilities = model(
+                blue_picks_tensor[batch_indices],
+                blue_bans_tensor[batch_indices],
+                red_picks_tensor[batch_indices],
+                red_bans_tensor[batch_indices],
+                continuous_tensor[batch_indices],
+            )
+            batch_weights = weights_tensor[batch_indices]
+            per_example_loss = torch.nn.functional.binary_cross_entropy(
+                probabilities, labels_tensor[batch_indices], reduction="none"
+            )
+            loss = (per_example_loss * batch_weights).sum() / batch_weights.sum().clamp_min(1e-8)
             loss.backward()
             optimizer.step()
             epoch_loss_total += float(loss.detach()) * batch_indices.shape[0]
         train_loss = epoch_loss_total / train_size
-        if not stopping_features:
+        if not stopping_encoded:
             if verbose:
                 print(f"Epoch {epoch}/{epochs}: train_loss={train_loss:.4f}")
             continue
         model.eval()
         with torch.inference_mode():
+            stopping_probabilities = model(*stopping_tensors)
+            stopping_per_example_loss = torch.nn.functional.binary_cross_entropy(
+                stopping_probabilities, stopping_labels_tensor, reduction="none"
+            )
             stopping_loss = float(
-                torch.nn.functional.binary_cross_entropy(
-                    model(stopping_tensor), stopping_labels_tensor
-                )
+                (stopping_per_example_loss * stopping_weights_tensor).sum()
+                / stopping_weights_tensor.sum().clamp_min(1e-8)
             )
         recent_stopping_losses.append(stopping_loss)
         smoothed_stopping_loss = sum(recent_stopping_losses) / len(recent_stopping_losses)
@@ -362,15 +486,11 @@ def train_model(
         print(f"Training finished: best epoch {best_epoch}, best stopping_loss={best_loss:.4f}")
 
     model.eval()
-    if validation_features:
+    if validation_encoded:
         with torch.inference_mode():
-            validation_tensor = torch.tensor(
-                validation_features,
-                dtype=torch.float32,
-                device=target_device,
-            )
+            validation_tensors = _stack_encoded(torch, validation_encoded, target_device)
             model_probabilities = [
-                float(value) for value in model(validation_tensor).detach().cpu().tolist()
+                float(value) for value in model(*validation_tensors).detach().cpu().tolist()
             ]
     else:
         model_probabilities = []
@@ -400,7 +520,9 @@ def train_model(
     torch.save(
         {
             "state_dict": model.cpu().state_dict(),
-            "input_size": input_size,
+            "num_champions": feature_space.num_champions,
+            "continuous_size": feature_space.continuous_size,
+            "embedding_dim": embedding_dim,
             "hidden_size": hidden_size,
             "dropout": dropout,
             "feature_space": feature_space.model_dump(mode="json"),
@@ -430,6 +552,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--hidden-size", type=int, default=128)
+    parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument("--weight-decay", type=float, default=1e-2)
+    parser.add_argument("--learning-rate", type=float, default=0.001)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--patience", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     arguments = parser.parse_args(argv)
@@ -444,6 +571,11 @@ def main(argv: list[str] | None = None) -> None:
         output_dir,
         epochs=arguments.epochs,
         hidden_size=arguments.hidden_size,
+        dropout=arguments.dropout,
+        weight_decay=arguments.weight_decay,
+        learning_rate=arguments.learning_rate,
+        batch_size=arguments.batch_size,
+        patience=arguments.patience,
         seed=arguments.seed,
         device=arguments.device,
         ddragon=_read_traits(ddragon_path),

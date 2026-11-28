@@ -1,10 +1,17 @@
+import time
 from collections.abc import Callable
 
 import pytest
 
 from app.engine.errors import UnknownPatchError
 from app.engine.stats import blend_patches
-from app.pipeline.aggregates import PatchAggregate, compute_aggregates
+from app.pipeline.aggregates import (
+    PatchAggregate,
+    SideAggregate,
+    TeamAggregate,
+    TeamChampionAggregate,
+    compute_aggregates,
+)
 from app.pipeline.dataset import GameDraft
 
 
@@ -66,6 +73,12 @@ def test_sums_counts_across_blended_patches(aggregates: dict[str, PatchAggregate
     assert stats.pair("A", "missing") is None
 
 
+def test_sums_matchup_counts_across_blended_patches(aggregates: dict[str, PatchAggregate]) -> None:
+    stats = blend_patches(aggregates, None, min_games=6)
+
+    assert stats.matchup("top", "missing", "missing") is None
+
+
 def test_unknown_or_missing_patch_raises(aggregates: dict[str, PatchAggregate]) -> None:
     with pytest.raises(UnknownPatchError, match="15.1"):
         blend_patches(aggregates, "15.1")
@@ -96,3 +109,93 @@ def test_subject_history_extends_beyond_global_patch_window(
     champion = stats.champion("S")
     assert team_champion is not None and team_champion.picks == 10
     assert champion is not None and champion.games == 10
+
+
+def test_blend_patches_scales_with_total_records_not_patches_times_subjects() -> None:
+    """Regression test: per-subject lookback must not linearly scan each patch's team list.
+
+    Real multi-year tournament data has many teams that each appear on only a handful of
+    patches, so most (team, patch) pairs are misses. Scanning every patch's full team list
+    with `next(... for item in patch.teams if item.team_id == team_id)` to resolve each miss
+    made this scale with teams_per_patch * patch_count * teams_per_patch, which on the merged
+    GRID + Oracle's Elixir dataset (83 patches, 927 teams) made validation-metric computation
+    take minutes instead of a fraction of a second.
+    """
+    patch_count = 83
+    teams_per_patch = 300
+    aggregates: dict[str, PatchAggregate] = {}
+    for patch_index in range(patch_count):
+        label = f"20.{patch_index:02d}"
+        teams = [
+            TeamAggregate(
+                team_id=f"team-{patch_index}-{team_index}", games=20, decided_games=20, wins=10
+            )
+            for team_index in range(teams_per_patch)
+        ]
+        aggregates[label] = PatchAggregate(
+            patch=label,
+            game_count=teams_per_patch,
+            champions=[],
+            sides=SideAggregate(blue_games=0, blue_wins=0, red_games=0, red_wins=0),
+            synergies=[],
+            matchups=[],
+            team_champions=[],
+            teams=teams,
+        )
+
+    started = time.perf_counter()
+    blend_patches(aggregates, patch=f"20.{patch_count - 1:02d}", min_games=1)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 2.0
+
+
+def test_sum_subject_teams_does_not_resum_the_whole_team_champion_table_per_team() -> None:
+    """Regression test: resolving one team's champion history must not resum every team's.
+
+    Each team only needs its own `team_champions` records, but the previous implementation
+    summed the *entire* table (every team's every champion, across the team's subject patches)
+    and then filtered down to the one team it wanted, for every team in the vocabulary. On the
+    merged GRID + Oracle's Elixir dataset (hundreds of teams, each with several champions per
+    patch) this threw away almost all of the work and, combined with pydantic model_copy
+    overhead, was the dominant cost behind validation-metric computation hanging for minutes.
+    """
+    patch_count = 3
+    teams_per_patch = 1800
+    champs_per_team = 5
+    aggregates: dict[str, PatchAggregate] = {}
+    for patch_index in range(patch_count):
+        label = f"20.{patch_index:02d}"
+        teams = [
+            TeamAggregate(team_id=f"team-{team_index}", games=20, decided_games=20, wins=10)
+            for team_index in range(teams_per_patch)
+        ]
+        team_champions = [
+            TeamChampionAggregate(
+                team_id=f"team-{team_index}",
+                champion_id=f"champ-{champion_index}",
+                picks=4,
+                decided_picks=4,
+                wins=2,
+                bans=0,
+                banned_against=0,
+            )
+            for team_index in range(teams_per_patch)
+            for champion_index in range(champs_per_team)
+        ]
+        aggregates[label] = PatchAggregate(
+            patch=label,
+            game_count=teams_per_patch,
+            champions=[],
+            sides=SideAggregate(blue_games=0, blue_wins=0, red_games=0, red_wins=0),
+            synergies=[],
+            matchups=[],
+            team_champions=team_champions,
+            teams=teams,
+        )
+
+    started = time.perf_counter()
+    blend_patches(aggregates, patch=f"20.{patch_count - 1:02d}", min_games=1)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 1.0

@@ -2,6 +2,9 @@
 stl-hackathon-2026-grid-starter/
 *.zst
 *.jsonl
+
+# Oracle's Elixir CSV source data: downloaded locally, never committed
+oracle-elixir-dataset/
 # Decompressed copies or extracts built from the data (adjust to your project)
 *.parquet
 *.sqlite

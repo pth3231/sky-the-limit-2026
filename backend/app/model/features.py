@@ -2,6 +2,9 @@
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from functools import cached_property
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,6 +17,19 @@ from app.pipeline.drafts import Role
 _ROLES: tuple[Role, ...] = ("top", "jungle", "mid", "bot", "support")
 _INFO_FIELDS: tuple[str, ...] = ("attack", "defense", "magic", "difficulty")
 _META_FIELDS: tuple[str, ...] = ("pick_rate", "ban_rate", "win_rate")
+_TEAM_PRIOR_RATE = 0.5
+_TEAM_PRIOR_GAMES = 10
+_TEAM_RECENT_GAMES_WINDOW = 50
+
+
+def _date_key(game: GameDraft) -> float:
+    try:
+        value = datetime.fromisoformat(game.started_at.replace("Z", "+00:00"))
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.timestamp()
+    except ValueError:
+        return float("-inf")
 
 
 class DraftState(BaseModel):
@@ -23,6 +39,19 @@ class DraftState(BaseModel):
 
     patch: str = "unknown"
     actions: list[str] = Field(default_factory=list)
+    blue_team_id: str | None = None
+    red_team_id: str | None = None
+
+
+@dataclass(frozen=True)
+class EncodedState:
+    """Champion-index slot arrays plus continuous aggregate features for one draft state."""
+
+    blue_picks: list[int]
+    blue_bans: list[int]
+    red_picks: list[int]
+    red_bans: list[int]
+    continuous: list[float] = field(default_factory=list)
 
 
 class ChampionMeta(BaseModel):
@@ -104,6 +133,8 @@ class FeatureSpace(BaseModel):
     patch_champion_stats: dict[str, dict[str, ChampionMeta]]
     global_champion_stats: dict[str, ChampionMeta]
     role_profiles: dict[str, dict[Role, RoleProfile]]
+    matchup_win_rates: dict[str, float] = Field(default_factory=dict)
+    team_win_rates: dict[str, float] = Field(default_factory=dict)
 
     @classmethod
     def fit(
@@ -123,6 +154,8 @@ class FeatureSpace(BaseModel):
         global_game_count = 0
         role_counts: dict[str, Counter[Role]] = {}
         role_values: dict[str, dict[Role, list[float]]] = {}
+        matchup_counts: dict[tuple[Role, str, str], list[int]] = {}
+        team_game_log: dict[str, list[tuple[float, bool]]] = {}
 
         normalized_traits: dict[str, ChampionTraits] = {}
         for name, value in (ddragon or {}).items():
@@ -148,6 +181,11 @@ class FeatureSpace(BaseModel):
                 game.blue_team_id,
                 game.red_team_id,
             }
+            if decided:
+                for team_id in (game.blue_team_id, game.red_team_id):
+                    team_game_log.setdefault(team_id, []).append(
+                        (_date_key(game), team_id == game.winner_team_id)
+                    )
             for action in game.actions:
                 champions.add(action.champion_id)
                 champion_names.setdefault(action.champion_id, action.champion_name)
@@ -190,6 +228,27 @@ class FeatureSpace(BaseModel):
                     player.vision_score,
                 )
 
+            lineup_by_role: dict[Role, dict[str, str]] = {}
+            for player in game.lineups:
+                if player.role is None:
+                    continue
+                lineup_by_role.setdefault(player.role, {})[player.team_id] = player.champion_id
+            if decided:
+                for role, by_team in lineup_by_role.items():
+                    blue_champion = by_team.get(game.blue_team_id)
+                    red_champion = by_team.get(game.red_team_id)
+                    if blue_champion is None or red_champion is None:
+                        continue
+                    blue_won = game.winner_team_id == game.blue_team_id
+                    forward = matchup_counts.setdefault((role, blue_champion, red_champion), [0, 0])
+                    forward[0] += 1
+                    forward[1] += blue_won
+                    backward = matchup_counts.setdefault(
+                        (role, red_champion, blue_champion), [0, 0]
+                    )
+                    backward[0] += 1
+                    backward[1] += not blue_won
+
         champion_traits: dict[str, ChampionTraits] = {}
         for champion_id, name in champion_names.items():
             traits = normalized_traits.get(normalize_champion_name(name))
@@ -218,6 +277,20 @@ class FeatureSpace(BaseModel):
                     kill_participation=values[7] / games if games else 0.0,
                 )
 
+        matchup_win_rates = {
+            f"{role}|{champion_id}|{opponent_id}": wins / games
+            for (role, champion_id, opponent_id), (games, wins) in matchup_counts.items()
+        }
+        team_win_rates: dict[str, float] = {}
+        for team_id, entries in team_game_log.items():
+            recent = sorted(entries, key=lambda entry: entry[0], reverse=True)
+            recent = recent[:_TEAM_RECENT_GAMES_WINDOW]
+            games = len(recent)
+            wins = sum(1 for _, won in recent if won)
+            team_win_rates[team_id] = (wins + _TEAM_PRIOR_RATE * _TEAM_PRIOR_GAMES) / (
+                games + _TEAM_PRIOR_GAMES
+            )
+
         return cls(
             champion_ids=sorted(champions),
             patches=sorted(patch for patch in vocabulary_patches if patch != "unknown"),
@@ -230,12 +303,24 @@ class FeatureSpace(BaseModel):
             },
             global_champion_stats=_champion_meta(global_counts, global_game_count),
             role_profiles=role_profiles,
+            matchup_win_rates=matchup_win_rates,
+            team_win_rates=team_win_rates,
         )
 
     @property
-    def input_size(self) -> int:
-        """Return the stable encoded vector width for this fitted feature space."""
-        return len(self.encode(DraftState()))
+    def num_champions(self) -> int:
+        """Return the fitted champion vocabulary size (the embedding padding index)."""
+        return len(self.champion_ids)
+
+    @property
+    def continuous_size(self) -> int:
+        """Return the stable width of the continuous feature block for this feature space."""
+        return len(self.encode(DraftState()).continuous)
+
+    @cached_property
+    def _champion_index(self) -> dict[str, int]:
+        """Champion id -> embedding index, built once per instance instead of per encode() call."""
+        return {champion_id: index for index, champion_id in enumerate(self.champion_ids)}
 
     def _meta_for(self, patch: str, champion_id: str) -> ChampionMeta | None:
         return self.patch_champion_stats.get(patch, {}).get(
@@ -243,22 +328,29 @@ class FeatureSpace(BaseModel):
             self.global_champion_stats.get(champion_id),
         )
 
-    def encode(self, state: DraftState) -> list[float]:
-        """Encode draft actions with blue/red, pick/ban, role, trait, and meta features."""
-        champion_index = {champion_id: index for index, champion_id in enumerate(self.champion_ids)}
-        champion_count = len(self.champion_ids)
-        presence = [0.0] * (4 * champion_count)
+    def encode(self, state: DraftState) -> EncodedState:
+        """Encode a draft state as champion-index slot arrays plus continuous features."""
+        champion_index = self._champion_index
+        sentinel = self.num_champions
+        slots: dict[str, list[int]] = {
+            "blue_picks": [sentinel] * 5,
+            "blue_bans": [sentinel] * 5,
+            "red_picks": [sentinel] * 5,
+            "red_bans": [sentinel] * 5,
+        }
+        slot_cursors = {key: 0 for key in slots}
         picks: dict[str, list[str]] = {"blue": [], "red": []}
         bans: dict[str, list[str]] = {"blue": [], "red": []}
 
         for index, champion_id in enumerate(state.actions[: len(DRAFT_ORDER)]):
             slot = DRAFT_ORDER[index]
-            side_index = 0 if slot.side == "blue" else 1
-            action_index = 0 if slot.action == "pick" else 1
-            channel = side_index * 2 + action_index
-            champion_position = champion_index.get(champion_id)
-            if champion_position is not None:
-                presence[channel * champion_count + champion_position] = 1.0
+            group_key = f"{slot.side}_{'picks' if slot.action == 'pick' else 'bans'}"
+            cursor = slot_cursors[group_key]
+            if cursor < len(slots[group_key]):
+                champion_position = champion_index.get(champion_id)
+                if champion_position is not None:
+                    slots[group_key][cursor] = champion_position
+                slot_cursors[group_key] = cursor + 1
             selected = picks if slot.action == "pick" else bans
             selected[slot.side].append(champion_id)
 
@@ -269,7 +361,7 @@ class FeatureSpace(BaseModel):
             self.patches.index(state.patch) if state.patch in self.patches else len(self.patches)
         )
         patch_features[patch_index] = 1.0
-        features = [*presence, *action_count, *patch_features]
+        continuous = [*action_count, *patch_features]
         patch_key = state.patch.strip() or "unknown"
 
         for side in ("blue", "red"):
@@ -279,7 +371,7 @@ class FeatureSpace(BaseModel):
                 for champion_id in current_picks
                 if champion_id in self.champion_roles
             )
-            features.extend(role_counts[role] / 5.0 for role in _ROLES)
+            continuous.extend(role_counts[role] / 5.0 for role in _ROLES)
 
             profiles: list[RoleProfile] = []
             for champion_id in current_picks:
@@ -298,16 +390,16 @@ class FeatureSpace(BaseModel):
                 [profile.gold_share for profile in profiles],
                 [profile.kill_participation for profile in profiles],
             )
-            features.extend(
+            continuous.extend(
                 sum(values) / len(values) if values else 0.0 for values in profile_values
             )
 
             side_traits = [self.champion_traits.get(champion_id) for champion_id in current_picks]
             side_traits = [traits for traits in side_traits if traits is not None]
-            features.extend(
+            continuous.extend(
                 sum(tag in traits.tags for traits in side_traits) / 5.0 for tag in self.tag_names
             )
-            features.extend(
+            continuous.extend(
                 sum(traits.info.get(field, 0.0) for traits in side_traits)
                 / (10.0 * len(side_traits))
                 if side_traits
@@ -316,12 +408,45 @@ class FeatureSpace(BaseModel):
             )
 
             for selected in (current_picks, bans[side]):
-                for field in _META_FIELDS:
+                for meta_field in _META_FIELDS:
                     values = [
-                        getattr(meta, field)
+                        getattr(meta, meta_field)
                         for champion_id in selected
                         if (meta := self._meta_for(patch_key, champion_id)) is not None
                     ]
-                    features.append(sum(values) / len(values) if values else 0.0)
+                    continuous.append(sum(values) / len(values) if values else 0.0)
 
-        return features
+            opponent_side = "red" if side == "blue" else "blue"
+            opponent_picks = picks[opponent_side]
+            matchup_rates: list[float] = []
+            for champion_id in current_picks:
+                champion_role = self.champion_roles.get(champion_id)
+                if champion_role is None:
+                    continue
+                opponent_id = next(
+                    (
+                        cid
+                        for cid in opponent_picks
+                        if self.champion_roles.get(cid) == champion_role
+                    ),
+                    None,
+                )
+                if opponent_id is None:
+                    continue
+                rate = self.matchup_win_rates.get(f"{champion_role}|{champion_id}|{opponent_id}")
+                if rate is not None:
+                    matchup_rates.append(rate)
+            continuous.append(sum(matchup_rates) / len(matchup_rates) if matchup_rates else 0.0)
+
+            team_id = state.blue_team_id if side == "blue" else state.red_team_id
+            continuous.append(
+                self.team_win_rates.get(team_id, _TEAM_PRIOR_RATE) if team_id else _TEAM_PRIOR_RATE
+            )
+
+        return EncodedState(
+            blue_picks=slots["blue_picks"],
+            blue_bans=slots["blue_bans"],
+            red_picks=slots["red_picks"],
+            red_bans=slots["red_bans"],
+            continuous=continuous,
+        )
